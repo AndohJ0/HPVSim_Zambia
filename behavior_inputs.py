@@ -21,12 +21,6 @@ default_layer_probs = dict(
         [0, 0, 0.10, 0.70, 0.80, 0.60, 0.60, 0.50, 0.20, 0.05, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01],  # Share f
         [0, 0, 0.05, 0.70, 0.80, 0.60, 0.60, 0.50, 0.50, 0.40, 0.30, 0.10, 0.05, 0.01, 0.01, 0.01]],  # Share m
     ),
-    o=np.array([
-        # Share of females (row 1) and males (row 2) of each age having one-off relationships
-        [0, 5,   10,   15,   20,   25,   30,   35,   40,   45,   50,   55,   60,   65,   70,   75],  # Age bracket
-        [0, 0, 0.01, 0.05, 0.05, 0.04, 0.03, 0.02, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01],  # Share f
-        [0, 0, 0.01, 0.01, 0.01, 0.02, 0.03, 0.04, 0.05, 0.05, 0.03, 0.02, 0.01, 0.01, 0.01, 0.01]],  # Share m
-    ),
 )
 
 # Scale these to better match the data
@@ -38,7 +32,6 @@ default_layer_probs['m'][1][9:] *= .15
 default_partners = dict(
         m=dict(dist='poisson', par1=0.1),
         c=dict(dist='poisson', par1=0.5),
-        o=dict(dist='poisson', par1=0.0),
 )
 
 #%% MIXING
@@ -63,5 +56,5 @@ default_mixing_all = np.array([
 ])
 
 default_mixing = dict()
-for k in ['m','c','o']: default_mixing[k] = default_mixing_all
+for k in ['m','c']: default_mixing[k] = default_mixing_all
 
