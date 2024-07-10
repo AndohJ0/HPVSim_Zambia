@@ -99,14 +99,16 @@ def run_calib(location=None, n_trials=None, n_workers=None,
                              'asr_cancer_incidence', 'cancer_incidence_by_age_with_hiv',
                              'cancer_incidence_by_age_no_hiv']
 
-    calib = hpv.Calibration(sim, calib_pars=calib_pars, genotype_pars=genotype_pars,
-                            hiv_pars=hiv_pars,
-                            name=f'{location}_calib',
-                            datafiles=datafiles,
-                            extra_sim_result_keys=extra_sim_result_keys,
-                            total_trials=n_trials, n_workers=n_workers,
-                            storage=storage
-                            )
+    calib = hpv.Calibration(
+        sim,
+        calib_pars=calib_pars,
+        hiv_pars=hiv_pars,
+        name=f'{location}_calib',
+        datafiles=datafiles,
+        extra_sim_result_keys=extra_sim_result_keys,
+        total_trials=n_trials, n_workers=n_workers,
+        storage=storage
+    )
     calib.calibrate()
     filename = f'{location}_calib{filestem}'
     if do_plot:
