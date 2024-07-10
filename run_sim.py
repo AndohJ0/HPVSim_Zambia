@@ -20,8 +20,15 @@ save_plots = True
 
 
 #%% Simulation creation functions
-def make_sim(calib_pars=None, debug=0, analyzers=None, interventions=None, seed=1, end=2020):
-    ''' Define parameters, analyzers, and interventions for the simulation -- not the sim itself '''
+def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, end=None,
+             datafile=None, hiv_datafile=None, art_datafile=None):
+    """"
+    Define parameters, analyzers, and interventions for the simulation
+    """
+    if end is None:
+        end = 2100
+    if calib:
+        end = 2020
 
     pars = sc.objdict(
         n_agents=[10e3, 1e3][debug],
@@ -39,7 +46,13 @@ def make_sim(calib_pars=None, debug=0, analyzers=None, interventions=None, seed=
         ms_agent_ratio=100,
         verbose=0.0,
         rand_seed=seed,
+        model_hiv=True,
+        hiv_pars=dict(),
     )
+
+    # Latency parameters
+    pars.hpv_control_prob = 0.0  # Probability that HPV is controlled latently vs. cleared
+    pars.hpv_reactivation = 0.025  # Probability of a latent infection reactivating
 
     # Sexual behavior parameters
     # Debut: derived by fitting to 2018 DHS
@@ -82,12 +95,18 @@ def make_sim(calib_pars=None, debug=0, analyzers=None, interventions=None, seed=
         c=dict(dist='poisson1', par1=0.2),
     )
 
+    # HIV parameters
+    pars.hiv_pars['art_failure_prob'] = 0.1
+
     # If calibration parameters have been supplied, use them here
     if calib_pars is not None:
         pars = sc.mergedicts(pars, calib_pars)
 
     # Create the sim
-    sim = hpv.Sim(pars=pars, interventions=interventions, analyzers=analyzers, rand_seed=seed)
+    sim = hpv.Sim(
+        pars=pars, interventions=interventions, rand_seed=seed,
+        datafile=datafile, hiv_datafile=hiv_datafile, art_datafile=art_datafile
+    )
 
     return sim
 
@@ -95,14 +114,24 @@ def make_sim(calib_pars=None, debug=0, analyzers=None, interventions=None, seed=
 #%% Simulation running functions
 def run_sim(
         analyzers=None, interventions=None, debug=0, seed=1, verbose=0.2,
-        do_save=False, end=2020, calib_pars=None):
+        do_save=False, end=2020, calib_pars=None, hiv_datafile=None, art_datafile=None):
 
+    dflocation = location.replace(' ', '_')
+    # Make arguments
+    if hiv_datafile is None:
+        hiv_datafile = [f'data/{dflocation}_hiv_incidence.csv',
+                        f'data/{dflocation}_female_hiv_mortality.csv',
+                        f'data/{dflocation}_male_hiv_mortality.csv']
+    if art_datafile is None:
+        art_datafile = [f'data/{dflocation}_art_coverage.csv']
 
     # Make sim
     sim = make_sim(
         debug=debug,
         seed=seed,
         end=end,
+        hiv_datafile=hiv_datafile,
+        art_datafile=art_datafile,
         analyzers=analyzers,
         interventions=interventions,
         calib_pars=calib_pars
@@ -133,7 +162,7 @@ if __name__ == '__main__':
     ]
 
     location = 'zambia'
-    calib_pars = sc.loadobj(f'results/{location}_pars_nov06.obj')
+    calib_pars = None  #sc.loadobj(f'results/{location}_pars_nov06.obj')
 
     # Run and plot a single simulation
     # Takes <1min to run
