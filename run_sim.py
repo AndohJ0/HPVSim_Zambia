@@ -20,7 +20,7 @@ save_plots = True
 
 
 #%% Simulation creation functions
-def make_sim(calib=False, calib_pars=None, debug=0, analyzers=None, interventions=None, seed=1, end=None,
+def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, end=None,
              datafile=None, hiv_datafile=None, art_datafile=None):
     """"
     Define parameters, analyzers, and interventions for the simulation
@@ -104,7 +104,7 @@ def make_sim(calib=False, calib_pars=None, debug=0, analyzers=None, intervention
 
     # Create the sim
     sim = hpv.Sim(
-        pars=pars, interventions=interventions, analyzers=analyzers, rand_seed=seed,
+        pars=pars, interventions=interventions, rand_seed=seed,
         datafile=datafile, hiv_datafile=hiv_datafile, art_datafile=art_datafile
     )
 
