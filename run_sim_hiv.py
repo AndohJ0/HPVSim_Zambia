@@ -21,7 +21,7 @@ save_plots = True
 
 
 #%% Simulation creation functions
-def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, end=None, analyzers = None, 
+def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=100, end=None, analyzers = None, 
              datafile=None, hiv_datafile=None, art_datafile=None):
     """"
     Define parameters, analyzers, and interventions for the simulation
@@ -96,21 +96,20 @@ def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, 
         c=dict(dist='poisson1', par1=0.2),
     )
 
+    # sev_dist parameters
+    pars.sev_dist = dict(dist='normal_pos', par1=1.33, par2=0.2)
+
     # HIV parameters
     pars.hiv_pars['art_failure_prob'] = 0.1
 
     # If calibration parameters have been supplied, use them here
     if calib_pars is not None:
-        # Get the set of valid parameter keys for hpv.Sim
-        valid_keys = hpv.Sim().pars.keys()
-        # Filter calib_pars.best_pars to include only valid keys
-        calib_pars_filtered = {k: v for k, v in calib_pars.best_pars.items() if k in valid_keys}
-        # Merge the filtered calibration parameters with pars
-        pars = sc.mergedicts(pars, calib_pars_filtered)
+        pars = sc.mergedicts(pars, calib_pars)
+        #print(pars)
 
     # Create the sim
     sim = hpv.Sim(
-        pars=pars, interventions=interventions, rand_seed=seed,
+        pars=pars, interventions=interventions, rand_seed=seed, analyzers=analyzers,
         datafile=datafile, hiv_datafile=hiv_datafile, art_datafile=art_datafile
     )
 
@@ -125,13 +124,29 @@ def run_sim(
     #dflocation = location.replace(' ', '_')
     # Make arguments
     if hiv_datafile is None:
-        hiv_datafile = ['data/zambia_hiv_incidence.csv', 
-                        'data/zambia_female_hiv_mortality.csv',
-                        'data/zambia_male_hiv_mortality.csv']
+        hiv_datafile = ['data/zambia_hiv_incidence_updated.csv', 
+                        'data/zambia_female_hiv_mortality_updated.csv',
+                        'data/zambia_male_hiv_mortality_updated.csv']
     if art_datafile is None:
         art_datafile = ['data/zambia_art_coverage.csv']
 
-    
+    az1 = hpv.age_results(
+        result_args=sc.objdict(            
+            cancers_no_hiv=sc.objdict(
+                years=2020,
+                edges=np.array([0.,5.,10.,15.,20.,25.,30.,35.,40.,45.,50.,55.,60.,65.,70.,75.,80.,100.]),
+            ),
+            cancers_with_hiv=sc.objdict(
+                years=2020,
+                edges=np.array([0.,5.,10.,15.,20.,25.,30.,35.,40.,45.,50.,55.,60.,65.,70.,75.,80.,100.]),
+            ),
+            cancers=sc.objdict(
+                years=20120,
+                edges=np.array([0.,5.,10.,15.,20.,25.,30.,35.,40.,45.,50.,55.,60.,65.,70.,75.,80.,100.]),
+            ),
+        )
+    )
+
     # Make sim
     sim = make_sim(
         debug=debug,
@@ -171,16 +186,73 @@ if __name__ == '__main__':
     ]
 
     location = 'zambia'
-    calib_pars = sc.loadobj(f'results/{location}_calib_hiv.obj')
+    calib = sc.loadobj(f'results/{location}_calib.obj')
+    calib_pars = calib.trial_pars_to_sim_pars()
 
     # Run and plot a single simulation
     # Takes <1min to run
     if 'run_single' in to_run:
-        sim = run_sim(calib_pars=calib_pars, end=2020, debug=debug)  # Run the simulation
+        az1 = hpv.age_results(
+        result_args=sc.objdict( 
+            cancers_no_hiv=sc.objdict(
+                years=2020,
+                edges=np.array([0.,5.,10.,15.,20.,25.,30.,35.,40.,45.,50.,55.,60.,65.,70.,75.,80.,100.]),
+            ),
+            cancers_with_hiv=sc.objdict(
+                years=2020,
+                edges=np.array([0.,5.,10.,15.,20.,25.,30.,35.,40.,45.,50.,55.,60.,65.,70.,75.,80.,100.]),
+            ),
+            cancers=sc.objdict(
+                years=2020,
+                edges=np.array([0.,5.,10.,15.,20.,25.,30.,35.,40.,45.,50.,55.,60.,65.,70.,75.,80.,100.]),
+                #datafile='data/zambia_cancer_cases.csv',
+            ),           
+            cancer_incidence_no_hiv=sc.objdict(
+                years=2020,
+                edges=np.array([0.,5.,10.,15.,20.,25.,30.,35.,40.,45.,50.,55.,60.,65.,70.,75.,80.,100.]),
+            ),
+            cancer_incidence_with_hiv=sc.objdict(
+                years=2020,
+                edges=np.array([0.,5.,10.,15.,20.,25.,30.,35.,40.,45.,50.,55.,60.,65.,70.,75.,80.,100.]),
+            ),
+            cancer_incidence=sc.objdict(
+                years=2020,
+                edges=np.array([0.,5.,10.,15.,20.,25.,30.,35.,40.,45.,50.,55.,60.,65.,70.,75.,80.,100.]),
+            ),
+        )
+        )
+        sim = run_sim(calib_pars=calib_pars, end=2020, debug=debug, analyzers=az1)  # Run the simulation
         sim.to_excel('zambia_hiv_sim.xlsx') # Save the simulation to an Excel file
-        df = pd.read_excel('zambia_hiv_sim.xlsx').to_csv('zambia_hiv_sim.csv') # Read the Excel file and save it as a CSV file
         sim.plot()  # Plot the simulation
         hpv.savefig('my-fig.png')  # Save the plot to a file
+        a=sim.get_analyzer()
+        a.plot()  # Save the plot to a file
+
+        # Extract results from dictionary
+        cancers_with_hiv = a.results['cancers_with_hiv'][np.int64(2020)]
+        cancers_no_hiv = a.results['cancers_no_hiv'][np.int64(2020)]
+        cancers = a.results['cancers'][np.int64(2020)]
+        cancer_incidence_no_hiv = a.results['cancer_incidence_no_hiv'][np.int64(2020)]
+        cancer_incidence_with_hiv = a.results['cancer_incidence_with_hiv'][np.int64(2020)]
+        cancer_incidence = a.results['cancer_incidence'][np.int64(2020)]
+
+        # Perform division
+        cancer_ratio = cancer_incidence_with_hiv/cancer_incidence_no_hiv 
+
+        # Create a DataFrame
+        df = pd.DataFrame({
+               'bins': a.results['cancers']['bins'],
+               'cancers': cancers,
+               'cancers_with_hiv': cancers_with_hiv,
+               'cancers_no_hiv': cancers_no_hiv,
+               'cancer_incidence': cancer_incidence,
+               'cancer_incidence_with_hiv': cancer_incidence_with_hiv,
+               'cancer_incidence_no_hiv': cancer_incidence_no_hiv,
+               'cancer_ratio': cancer_ratio
+        })
+
+        # Save the DataFrame to an Excel file
+        #df.to_excel('/storage/homefs/ja22x644/HPVSim_zambia/zambia_hiv_sim_2020-11.xlsx', index=False)
  
     # Example of how to run a scenario with and without vaccination
     # Takes ~2min to run
