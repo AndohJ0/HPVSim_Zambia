@@ -30,8 +30,8 @@ debug = False  # If True, this will do smaller runs that can be run locally for 
 do_save = True
 
 # Run settings for calibration (dependent on debug)
-n_trials = [5000, 10][debug]  # How many trials to run for calibration
-n_workers = [40, 1][debug]  # How many cores to use
+n_trials = [1, 10][debug]  # How many trials to run for calibration
+n_workers = [1, 1][debug]  # How many cores to use
 storage = ["mysql://hpvsim_user@localhost/hpvsim_db", None][debug]  # Storage for calibrations
 
 
@@ -56,6 +56,14 @@ def run_calib(location=None, n_trials=None, n_workers=None,
     datafiles = [
         f'data/{dflocation}_cancer_cases.csv',  # Globocan
         f'data/{dflocation}_asr_cancer_incidence.csv',
+        f'data/{dflocation}_cancer_hiv_cases_2019.csv',
+        f'data/{dflocation}_cancer_hiv_cases_2020.csv',
+        f'data/{dflocation}_cancer_hiv_cases_2021.csv',
+        f'data/{dflocation}_cancer_hiv_cases_2022.csv',
+        f'data/{dflocation}_cancer_no_hiv_cases_2019.csv',
+        f'data/{dflocation}_cancer_no_hiv_cases_2020.csv',
+        f'data/{dflocation}_cancer_no_hiv_cases_2021.csv',
+        f'data/{dflocation}_cancer_no_hiv_cases_2022.csv',
     ]
 
     # Define the calibration parameters

@@ -1,0 +1,17 @@
+year,name,age,sex,genotype,value
+2019,cancers_with_hiv,0,female,total,0
+2019,cancers_with_hiv,15,female,total,0
+2019,cancers_with_hiv,20,female,total,2
+2019,cancers_with_hiv,25,female,total,7
+2019,cancers_with_hiv,30,female,total,38
+2019,cancers_with_hiv,35,female,total,69
+2019,cancers_with_hiv,40,female,total,100
+2019,cancers_with_hiv,45,female,total,85
+2019,cancers_with_hiv,50,female,total,54
+2019,cancers_with_hiv,55,female,total,38
+2019,cancers_with_hiv,60,female,total,17
+2019,cancers_with_hiv,65,female,total,8
+2019,cancers_with_hiv,70,female,total,4
+2019,cancers_with_hiv,75,female,total,4
+2019,cancers_with_hiv,80,female,total,2
+2019,cancers_with_hiv,85,female,total,0

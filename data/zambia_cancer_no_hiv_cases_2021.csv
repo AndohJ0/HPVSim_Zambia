@@ -1,0 +1,17 @@
+year,name,age,sex,genotype,value
+2019,cancers_no_hiv,0,female,total,0
+2019,cancers_no_hiv,15,female,total,0
+2019,cancers_no_hiv,20,female,total,6
+2019,cancers_no_hiv,25,female,total,9
+2019,cancers_no_hiv,30,female,total,15
+2019,cancers_no_hiv,35,female,total,29
+2019,cancers_no_hiv,40,female,total,57
+2019,cancers_no_hiv,45,female,total,48
+2019,cancers_no_hiv,50,female,total,46
+2019,cancers_no_hiv,55,female,total,41
+2019,cancers_no_hiv,60,female,total,30
+2019,cancers_no_hiv,65,female,total,32
+2019,cancers_no_hiv,70,female,total,24
+2019,cancers_no_hiv,75,female,total,14
+2019,cancers_no_hiv,80,female,total,11
+2019,cancers_no_hiv,85,female,total,0
