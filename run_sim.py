@@ -20,7 +20,7 @@ save_plots = True
 
 
 #%% Simulation creation functions
-def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, end=None,
+def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, analyzers=None, seed=1, end=None,
              datafile=None, hiv_datafile=None, art_datafile=None):
     """"
     Define parameters, analyzers, and interventions for the simulation
@@ -119,9 +119,9 @@ def run_sim(
     dflocation = location.replace(' ', '_')
     # Make arguments
     if hiv_datafile is None:
-        hiv_datafile = [f'data/{dflocation}_hiv_incidence.csv',
-                        f'data/{dflocation}_female_hiv_mortality.csv',
-                        f'data/{dflocation}_male_hiv_mortality.csv']
+        hiv_datafile = [f'data/{dflocation}_hiv_incidence_updated.csv',
+                        f'data/{dflocation}_female_hiv_mortality_updated.csv',
+                        f'data/{dflocation}_male_hiv_mortality_updated.csv']
     if art_datafile is None:
         art_datafile = [f'data/{dflocation}_art_coverage.csv']
 

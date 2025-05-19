@@ -32,8 +32,8 @@ do_save = True
 # Run settings for calibration (dependent on debug)
 n_trials = [1, 10][debug]  # How many trials to run for calibration
 n_workers = [1, 1][debug]  # How many cores to use
-storage = ["mysql://hpvsim_user@localhost/hpvsim_db", None][debug]  # Storage for calibrations
-
+# storage = ["mysql://hpvsim_user@localhost/hpvsim_db", None][debug]  # Storage for calibrations
+storage = None  # No storage for now
 
 ########################################################################
 # Run calibration
@@ -45,9 +45,9 @@ def make_priors():
 def run_calib(location=None, n_trials=None, n_workers=None,
               do_plot=False, do_save=True, filestem=''):
     dflocation = location.replace(" ", "_")
-    hiv_datafile = [f'data/{dflocation}_hiv_incidence.csv',
-                    f'data/{dflocation}_female_hiv_mortality.csv',
-                    f'data/{dflocation}_male_hiv_mortality.csv']
+    hiv_datafile = [f'data/{dflocation}_hiv_incidence_updated.csv',
+                    f'data/{dflocation}_female_hiv_mortality_updated.csv',
+                    f'data/{dflocation}_male_hiv_mortality_updated.csv']
     art_datafile = [f'data/{dflocation}_art_coverage_by_age_males.csv',
                     f'data/{dflocation}_art_coverage_by_age_females.csv']
 
@@ -102,8 +102,8 @@ def run_calib(location=None, n_trials=None, n_workers=None,
     )
 
     # Save some extra sim results
-    extra_sim_result_keys = ['cancers', 'cancers_with_hiv', 'cancers_no_hiv',
-                             'cancers_by_age_with_hiv', 'cancers_by_age_no_hiv',
+    extra_sim_result_keys = ['cancers',  'cancers_with_hiv', 'cancers_no_hiv',
+                             #'cancers_by_age_with_hiv', 'cancers_by_age_no_hiv',
                              'asr_cancer_incidence', 'cancer_incidence_by_age_with_hiv',
                              'cancer_incidence_by_age_no_hiv']
 
