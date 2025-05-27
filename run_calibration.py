@@ -31,7 +31,7 @@ do_save = True
 
 # Run settings for calibration (dependent on debug)
 n_trials = [5000, 10][debug]  # How many trials to run for calibration
-n_workers = [40, 1][debug]  # How many cores to use
+n_workers = [50, 1][debug]  # How many cores to use
 storage = ["mysql://hpvsim_user@localhost/hpvsim_db", None][debug]  # Storage for calibrations
 
 
@@ -45,9 +45,9 @@ def make_priors():
 def run_calib(location=None, n_trials=None, n_workers=None,
               do_plot=False, do_save=True, filestem=''):
     dflocation = location.replace(" ", "_")
-    hiv_datafile = [f'data/{dflocation}_hiv_incidence.csv',
-                    f'data/{dflocation}_female_hiv_mortality.csv',
-                    f'data/{dflocation}_male_hiv_mortality.csv']
+    hiv_datafile = [f'data/{dflocation}_hiv_incidence_updated.csv',
+                    f'data/{dflocation}_female_hiv_mortality_updated.csv',
+                    f'data/{dflocation}_male_hiv_mortality_updated.csv']
     art_datafile = [f'data/{dflocation}_art_coverage_by_age_males.csv',
                     f'data/{dflocation}_art_coverage_by_age_females.csv']
 
@@ -56,6 +56,7 @@ def run_calib(location=None, n_trials=None, n_workers=None,
     datafiles = [
         f'data/{dflocation}_cancer_cases.csv',  # Globocan
         f'data/{dflocation}_asr_cancer_incidence.csv',
+        f'data/cancer_rate_ratios.csv',
     ]
 
     # Define the calibration parameters
@@ -153,7 +154,7 @@ if __name__ == '__main__':
     if 'run_calibration' in to_run:
         filestem = ''
         sim, calib = run_calib(location=location, n_trials=n_trials, n_workers=n_workers,
-                               do_save=do_save, do_plot=False, filestem=filestem)
+                               do_save=do_save, do_plot=True, filestem=filestem)
 
     # Load the calibration, plot it, and save the best parameters -- usually locally
     if 'plot_calibration' in to_run:
