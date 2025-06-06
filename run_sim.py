@@ -7,6 +7,7 @@ import numpy as np
 import sciris as sc
 import hpvsim as hpv
 import pylab as pl
+import pandas as pd
 
 #%% Settings and filepaths
 
@@ -20,7 +21,7 @@ save_plots = True
 
 
 #%% Simulation creation functions
-def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, end=None,
+def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=10, end=None, analyzers=None,
              datafile=None, hiv_datafile=None, art_datafile=None):
     """"
     Define parameters, analyzers, and interventions for the simulation
@@ -35,6 +36,7 @@ def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, 
         dt=[0.25, 1.0][debug],
         start=[1960, 1980][debug],
         end=end,
+        beta=0.16,
         genotypes=[16, 18, 'hi5', 'ohr'],
         location='zambia',
         init_hpv_dist=dict(hpv16=0.4, hpv18=0.25, hi5=0.25, ohr=.1),
@@ -47,7 +49,7 @@ def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, 
         verbose=0.0,
         rand_seed=seed,
         model_hiv=True,
-        hiv_pars=dict(),
+        hiv_pars={},
     )
 
     # Latency parameters
@@ -101,6 +103,7 @@ def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, 
     # If calibration parameters have been supplied, use them here
     if calib_pars is not None:
         pars = sc.mergedicts(pars, calib_pars)
+        #print(pars)
 
     # Create the sim
     sim = hpv.Sim(
@@ -119,7 +122,7 @@ def run_sim(
     dflocation = location.replace(' ', '_')
     # Make arguments
     if hiv_datafile is None:
-        hiv_datafile = [f'data/{dflocation}_hiv_incidence.csv',
+        hiv_datafile = [f'data/{dflocation}_hiv_incidence_updated.csv',
                         f'data/{dflocation}_female_hiv_mortality.csv',
                         f'data/{dflocation}_male_hiv_mortality.csv']
     if art_datafile is None:
@@ -162,12 +165,15 @@ if __name__ == '__main__':
     ]
 
     location = 'zambia'
-    calib_pars = None  #sc.loadobj(f'results/{location}_pars_nov06.obj')
+    calib_pars = None #sc.loadobj(f'results/{location}_calib_may20_pars.obj')
+    
 
     # Run and plot a single simulation
     # Takes <1min to run
     if 'run_single' in to_run:
         sim = run_sim(calib_pars=calib_pars, end=2020, debug=debug)  # Run the simulation
+        sim.to_excel('zambia_sim.xlsx')
+        df = pd.read_excel('zambia_sim.xlsx').to_csv('zambia_sim.csv')
         sim.plot()  # Plot the simulation
  
     # Example of how to run a scenario with and without vaccination
