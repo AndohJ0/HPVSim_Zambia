@@ -219,6 +219,10 @@ if __name__ == '__main__':
                 years=2020,
                 edges=np.array([0.,5.,10.,15.,20.,25.,30.,35.,40.,45.,50.,55.,60.,65.,70.,75.,80.,100.]),
             ),
+            cancer_hiv_rate_ratio=sc.objdict(
+                years=2020,
+                edges=np.array([0.,5.,10.,15.,20.,25.,30.,35.,40.,45.,50.,55.,60.,65.,70.,75.,80.,100.]),
+            ),
         )
         )
         sim = run_sim(calib_pars=calib_pars, end=2020, debug=debug, analyzers=az1)  # Run the simulation
@@ -235,9 +239,8 @@ if __name__ == '__main__':
         cancer_incidence_no_hiv = a.results['cancer_incidence_no_hiv'][np.int64(2020)]
         cancer_incidence_with_hiv = a.results['cancer_incidence_with_hiv'][np.int64(2020)]
         cancer_incidence = a.results['cancer_incidence'][np.int64(2020)]
+        cancer_rate_ratio = a.results['cancer_hiv_rate_ratio'][np.int64(2020)]
 
-        # Perform division
-        cancer_ratio = cancer_incidence_with_hiv/cancer_incidence_no_hiv 
 
         # Create a DataFrame
         df = pd.DataFrame({
@@ -248,11 +251,11 @@ if __name__ == '__main__':
                'cancer_incidence': cancer_incidence,
                'cancer_incidence_with_hiv': cancer_incidence_with_hiv,
                'cancer_incidence_no_hiv': cancer_incidence_no_hiv,
-               'cancer_ratio': cancer_ratio
+               'cancer__rate_ratio': cancer_rate_ratio
         })
 
         # Save the DataFrame to an Excel file
-        #df.to_excel('/storage/homefs/ja22x644/HPVSim_zambia/zambia_hiv_sim_2020-11.xlsx', index=False)
+        #df.to_excel('zambia_hiv_analyzer_results.xlsx', index=False)
  
     # Example of how to run a scenario with and without vaccination
     # Takes ~2min to run
