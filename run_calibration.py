@@ -4,7 +4,7 @@ Calibrate the Zambia model to HIV and HPV outcomes
 
 # Additions to handle numpy multithreading
 import os
- 
+
 os.environ.update(
     OMP_NUM_THREADS='1',
     OPENBLAS_NUM_THREADS='1',
@@ -38,12 +38,10 @@ storage = ["mysql://hpvsim_user@localhost/hpvsim_db", None][debug]  # Storage fo
 ########################################################################
 # Run calibration
 ########################################################################
-def make_priors():
-    return
-
-
 def run_calib(location=None, n_trials=None, n_workers=None,
               do_plot=False, do_save=True, filestem=''):
+    """Run an Optuna-based calibration for `location` and optionally save/plot it."""
+    assert location is not None, 'location must be specified'
     dflocation = location.replace(" ", "_")
     hiv_datafile = [f'data/{dflocation}_hiv_incidence_updated.csv',
                     f'data/{dflocation}_female_hiv_mortality_updated.csv',
@@ -59,7 +57,7 @@ def run_calib(location=None, n_trials=None, n_workers=None,
         f'data/cancer_rate_ratios.csv',
     ]
 
-    # Define the calibration parameters
+    # Define the calibration parameters. Each bound is [initial, low, high, step].
     calib_pars = dict(
         beta=[0.05, 0.02, 0.5, 0.02],
         own_imm_hr=[0.5, 0.25, 1, 0.05],
@@ -126,6 +124,8 @@ def run_calib(location=None, n_trials=None, n_workers=None,
 # Load pre-run calibration
 ########################################################################
 def load_calib(location=None, do_plot=True, which_pars=0, save_pars=True, filestem=''):
+    """Load a saved calibration for `location`, optionally plotting and saving best pars."""
+    assert location is not None, 'location must be specified'
     fnlocation = location.replace(' ', '_')
     filename = f'{fnlocation}_calib{filestem}'
     calib = sc.load(f'results/{filename}.obj')
@@ -144,6 +144,33 @@ def load_calib(location=None, do_plot=True, which_pars=0, save_pars=True, filest
     return calib
 
 
+def plot_extra_results(calib, start_year=1985):
+    """Plot cancers-by-HIV-status, cancer incidence by age, and ASR incidence for the best-fit trial."""
+    best_par_ind = calib.df.index[0]
+    extra_sim_results = calib.extra_sim_results[best_par_ind]
+    years = calib.sim.results['year']
+    year_ind = sc.findinds(years, start_year)[0]
+    age_bin_ind = -2  # Second-to-last age bin edge (drops the open-ended top bin)
+
+    fig, axes = pl.subplots(3, 1)
+    axes[0].plot(years[year_ind:], extra_sim_results['cancers_with_hiv'][year_ind:], label='HIV+')
+    axes[0].plot(years[year_ind:], extra_sim_results['cancers_no_hiv'][year_ind:], label='HIV-')
+    axes[0].plot(years[year_ind:], extra_sim_results['cancers'][year_ind:], label='Total')
+    axes[0].set_title(f'Cancers over time')
+    axes[0].legend()
+    axes[1].plot(calib.sim.pars['age_bin_edges'][:-1],
+                 extra_sim_results['cancer_incidence_by_age_with_hiv'][:, age_bin_ind], label='HIV+')
+    axes[1].plot(calib.sim.pars['age_bin_edges'][:-1],
+                 extra_sim_results['cancer_incidence_by_age_no_hiv'][:, age_bin_ind],
+                 label='HIV-')
+    axes[1].legend()
+
+    axes[2].plot(years[year_ind:], extra_sim_results['asr_cancer_incidence'][year_ind:])
+
+    fig.show()
+    return fig
+
+
 # %% Run as a script
 if __name__ == '__main__':
 
@@ -154,34 +181,13 @@ if __name__ == '__main__':
     if 'run_calibration' in to_run:
         filestem = ''
         sim, calib = run_calib(location=location, n_trials=n_trials, n_workers=n_workers,
-                               do_save=do_save, do_plot=True, filestem=filestem)
+                               do_save=do_save, do_plot=False, filestem=filestem)
 
     # Load the calibration, plot it, and save the best parameters -- usually locally
     if 'plot_calibration' in to_run:
 
         filestem = ''
         calib = load_calib(location=location, do_plot=True, save_pars=True, filestem=filestem)
-
-        best_par_ind = calib.df.index[0]
-        extra_sim_results = calib.extra_sim_results[best_par_ind]
-        years = calib.sim.results['year']
-        year_ind = sc.findinds(years, 1985)[0]
-
-        fig, axes = pl.subplots(3, 1)
-        axes[0].plot(years[year_ind:], extra_sim_results['cancers_with_hiv'][year_ind:], label='HIV+')
-        axes[0].plot(years[year_ind:], extra_sim_results['cancers_no_hiv'][year_ind:], label='HIV-')
-        axes[0].plot(years[year_ind:], extra_sim_results['cancers'][year_ind:], label='Total')
-        axes[0].set_title(f'Cancers over time')
-        axes[0].legend()
-        axes[1].plot(calib.sim.pars['age_bin_edges'][:-1],
-                     extra_sim_results['cancer_incidence_by_age_with_hiv'][:, -2], label='HIV+')
-        axes[1].plot(calib.sim.pars['age_bin_edges'][:-1],
-                     extra_sim_results['cancer_incidence_by_age_no_hiv'][:, -2],
-                     label='HIV-')
-        axes[1].legend()
-
-        axes[2].plot(years[year_ind:], extra_sim_results['asr_cancer_incidence'][year_ind:])
-
-        fig.show()
+        plot_extra_results(calib)
 
     T.toc('Done')
