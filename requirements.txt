@@ -1,4 +1,4 @@
-hpvsim==2.2.6
+hpvsim[hiv]>=3.2
 sciris>=3.1
 numpy>=1.24
 pandas>=2.0

@@ -37,6 +37,16 @@ if __name__ == '__main__':
         raise FileNotFoundError(
             f'{calib_file} not found -- run run_calibration.py first to produce it.'
         )
+    # A calibration saved by hpvsim v2 cannot be unpickled here: it references
+    # hpvsim.people, hpvsim.analysis and hpvsim.base, all removed in v3, and
+    # sciris returns a NamedFailed placeholder rather than raising. The v2
+    # numbers are preserved in results/v2_artefact_snapshot.json; rerun
+    # run_calibration.py under v3 to regenerate this file.
+    if not hasattr(calib, 'df'):
+        raise RuntimeError(
+            f'{calib_file} is not a v3 calibration (loaded as '
+            f'{type(calib).__name__}). Rerun run_calibration.py under hpvsim v3.'
+        )
 
     if 'sim_with_top_pars' in to_run:
         top_pars = get_top_calibrated_pars(calib, n=100)  # Use the 100 best-fitting parameter sets
@@ -78,10 +88,11 @@ if __name__ == '__main__':
         for par_set in top_pars:
             print(f"  Rank {par_set['rank']:2d}: Mismatch = {par_set['mismatch']:.6f}, Trial Index = {par_set['trial_index']}")
         print("="*80 + "\n")
-        # Create age-stratified analyzer
-        az1 = create_age_analyzer()
+        # Create age-stratified analyzer. 2020 is the analyzer's reporting year
+        # and must fall inside the sim window.
+        az1 = create_age_analyzer(year=2020)
         # Run simulations with analyzers
-        sims, _ = run_multi_sim_with_analyzers(top_pars=top_pars, end=2025, analyzers=az1, n_runs=100,
+        sims, _ = run_multi_sim_with_analyzers(top_pars=top_pars, end=2025, analyzers=[az1], n_runs=100,
                                                model_hiv=include_hiv)
         # Aggregate and export standard metrics
         aggregate_and_export(sims, location, save=do_save)
