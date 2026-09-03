@@ -16,7 +16,7 @@ Requires `hpvsim==2.2.6`.
 
 | File | Purpose |
 |------|---------|
-| `run_sim.py` | Defines a standalone single-sim / vaccination-scenario runner. |
+| `run_scenarios.py` | Runs a single baseline sim, or a baseline-vs-vaccination MultiSim scenario. |
 | `run_functions.py` | Core simulation, calibration-analysis, and batch-run helpers (used by `run_top_calibrations.py`). |
 | `run_calibration.py` | Runs and loads the Optuna-based calibration to HIV/HPV/cancer targets. |
 | `run_top_calibrations.py` | Runs simulations across the top-N calibrated parameter sets, with optional age-stratified analyzers and ART-coverage counterfactuals. |
@@ -36,7 +36,7 @@ select which stage to run.
 
 ```bash
 python run_calibration.py         # calibrate (VM) or load + plot (local); see to_run in the file
-python run_sim.py                 # single run / vaccination scenario; see to_run in the file
+python run_scenarios.py           # single run / vaccination scenario; see to_run in the file
 python run_top_calibrations.py    # simulate the top-N calibrated parameter sets
 ```
 

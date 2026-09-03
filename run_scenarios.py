@@ -1,5 +1,7 @@
 """
-Define an HPVsim simulation for Zambia
+Zambia scenario driver: run a single baseline sim, or a baseline-vs-vaccination
+MultiSim. Uses make_sim/run_sim from run_functions so the sim definition lives
+in one place.
 """
 
 # Standard imports
