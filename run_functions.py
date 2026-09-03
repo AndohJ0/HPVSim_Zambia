@@ -189,6 +189,10 @@ def v2_calib_pars_to_v3(v2_pars, dt=0.25):
 
     Call this explicitly on anything recovered from the old .obj files (see
     results/v2_artefact_snapshot.json); make_sim does not do it implicitly.
+
+    Call it once PER SIM, not once for a batch: the returned dict contains live
+    ss.Dist objects (partner counts, rel_sev), and an ss.Dist carries RNG state,
+    so reusing one result across two sims fails -- see _behaviour_dists.
     Renames to the v3 scoped/suffixed names, converts the cross-layer
     probabilities from per-timestep to annual, and drops v2 parameters that
     v3 has no equivalent for.
