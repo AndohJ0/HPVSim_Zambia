@@ -325,12 +325,15 @@ def run_multi_sim(
         analyzers=None, interventions=None, debug=0, seed=1, verbose=0.5,
         do_save=False, end=2020, calib_pars=None, hiv_data=None,
         n_runs=10, batch_size=None, top_pars=None, create_reduced=True,
-        art_coverage_scale=1.0, model_hiv=True):
+        art_coverage_scale=1.0, model_hiv=True, n_cpus=None):
     """Run multiple simulations across one or more calibrated parameter sets.
 
     Handles both the single-par-set case (calib_pars=<dict>, top_pars=None) and
     the top-N-par-sets case (top_pars=[{'pars': ..., 'rank': ...}, ...]).
     Batches runs to cap memory; returns (all_sims, all_reduced).
+
+    Each batch runs as one ss.MultiSim across the (par_set, seed) combinations
+    in that batch, dispatched to n_cpus workers (default: all available).
 
     art_coverage_scale multiplies the ART coverage curve in-memory (1.0 = as-is,
     0.0 = counterfactual-without-ART); the base sim is otherwise unchanged.
@@ -342,136 +345,108 @@ def run_multi_sim(
     elif isinstance(top_pars, dict):
         top_pars = [top_pars]
 
-    # Optimize batch_size: use smaller batches for many parameter sets to save memory
-    if batch_size is None:
-        if len(top_pars) > 50:
-            batch_size = min(10, n_runs)  # Smaller batches for many parameter sets
-        else:
-            batch_size = min(25, n_runs)  # Standard batch size
-
     if hiv_data is None:
         hiv_data = _hiv_data()
     hiv_data = _scale_art_coverage(hiv_data, art_coverage_scale)
 
     total_runs = n_runs * len(top_pars)
-    print(f'Running {total_runs} simulations ({n_runs} per parameter set, {len(top_pars)} parameter sets)')
-    print(f'Using batch size: {batch_size}')
-    
-    # Reduce verbose output for individual sims when running many parameter sets
+    # A batch is one parallel MultiSim(sims=list); default fills the box so a
+    # small run finishes in a single batch. The old default -- min(25, n_runs)
+    # inside a per-par-set loop -- capped concurrency at n_runs regardless of
+    # core count, so 10x10 saturated only 10 workers on a 160-core VM. Override
+    # explicitly if memory is tight (each in-memory sim carries all its people).
+    if batch_size is None:
+        batch_size = min(total_runs, os.cpu_count() or 32)
+
     sim_verbose = 0.0 if len(top_pars) > 20 else verbose
-    
-    start_time = time.time()
-    
+    print(f'Running {total_runs} sims ({len(top_pars)} par sets x {n_runs} seeds); '
+          f'batch size {batch_size}; n_cpus={n_cpus if n_cpus is not None else "auto"}')
+
+    # (par_idx, seed_i) tasks -- one sim per pair, dispatched together so par
+    # sets and seeds run concurrently under one MultiSim.
+    tasks = [(par_idx, seed_i)
+             for par_idx in range(len(top_pars))
+             for seed_i in range(n_runs)]
+
     all_sims = []
-    all_reduced = []
-    total_completed = 0
-    last_progress_print = 0
-    progress_interval = max(1, total_runs // 50)  # Update progress every ~2% or at least every simulation
-    
-    for idx, cfg in enumerate(top_pars):
-        cfg_pars = cfg.get('pars', calib_pars)
-        # `or idx + 1`, not a dict default: the no-top_pars path below sets
-        # 'rank': None explicitly, so .get()'s default never fires and the
-        # label f-string used to raise on None.
-        cfg_rank = cfg.get('rank') or idx + 1
-        cfg_label = cfg.get('label') or f'top_{cfg_rank:02d}'
-        cfg_mismatch = cfg.get('mismatch', None)
-        
-        # Show parameter set info only for small runs or every 10 sets for large runs
-        if len(top_pars) <= 20:
-            print(f'\n=== Parameter set {idx + 1}/{len(top_pars)}: {cfg_label} (rank {cfg_rank}) ===')
-            if cfg_mismatch is not None:
-                print(f'Mismatch: {cfg_mismatch:.6f}')
-        elif (idx + 1) % 10 == 0 or idx == 0:
-            print(f'\n=== Parameter set {idx + 1}/{len(top_pars)}: {cfg_label} (rank {cfg_rank}) ===')
-        
-        batch_num = 0
-        for batch_start in range(0, n_runs, batch_size):
-            batch_num += 1
-            batch_end = min(batch_start + batch_size, n_runs)
-            batch_runs = batch_end - batch_start
-            
-            # Only show batch details for small runs
-            if len(top_pars) <= 20:
-                print(f'  Batch {batch_num}: runs {batch_start+1}-{batch_end} ({batch_runs} simulations)')
-            
-            # Create fresh base sim for each batch to avoid memory accumulation
-            base_sim = make_sim(
+    start_time = time.time()
+
+    for batch_start in range(0, len(tasks), batch_size):
+        batch_tasks = tasks[batch_start:batch_start + batch_size]
+        batch_sims = []
+        for par_idx, seed_i in batch_tasks:
+            cfg = top_pars[par_idx]
+            s = make_sim(
                 debug=debug,
-                seed=seed + idx * 10000 + batch_start,  # Use different seeds for each parameter set and batch
+                seed=seed + par_idx * 10000 + seed_i,
                 end=end,
                 hiv_data=hiv_data,
                 analyzers=analyzers,
                 interventions=interventions,
-                calib_pars=cfg_pars,
-                model_hiv=model_hiv
+                calib_pars=cfg.get('pars', calib_pars),
+                model_hiv=model_hiv,
             )
-            base_sim['verbose'] = sim_verbose  # Use reduced verbosity for individual sims
-            
-            # Create and run MultiSim for this batch
-            msim = ss.MultiSim(base_sim)
-            msim.run(n_runs=batch_runs)
-            
-            # Store results from this batch and add metadata
-            for sim in msim.sims:
-                sim.rank = cfg_rank
-                sim.top_label = cfg_label
-                if cfg_mismatch is not None:
-                    sim.mismatch = cfg_mismatch
-                all_sims.append(sim)
-            
-            total_completed += batch_runs
-            
-            # Print total progress regularly
-            if total_completed - last_progress_print >= progress_interval or total_completed == total_runs:
-                elapsed = time.time() - start_time
-                percent = (total_completed / total_runs) * 100
-                rate = total_completed / elapsed if elapsed > 0 else 0
-                remaining = (total_runs - total_completed) / rate if rate > 0 else 0
-                print(f'  Total progress: {total_completed}/{total_runs} simulations ({percent:.1f}%) | '
-                      f'Elapsed: {elapsed/60:.1f} min | Remaining: ~{remaining/60:.1f} min | '
-                      f'Rate: {rate:.2f} sims/min')
-                last_progress_print = total_completed
-            
-            # Force garbage collection to free memory
-            del msim, base_sim
-            gc.collect()
-            
-            if len(top_pars) <= 20:
-                print(f'  Completed batch {batch_num} ({batch_runs} simulations)')
-        
-        # Create a reduced median sim per parameter set (optional, can be expensive for many sets)
-        if create_reduced:
+            s['verbose'] = sim_verbose
+            # `or par_idx + 1`, not a dict default: the no-top_pars path sets
+            # 'rank': None explicitly, so .get()'s default never fires.
+            s.rank = cfg.get('rank') or par_idx + 1
+            s.top_label = cfg.get('label') or f'top_{s.rank:02d}'
+            if cfg.get('mismatch') is not None:
+                s.mismatch = cfg['mismatch']
+            batch_sims.append(s)
+
+        msim = ss.MultiSim(sims=batch_sims)
+        msim.run(n_cpus=n_cpus)
+        all_sims.extend(msim.sims)
+
+        del msim, batch_sims
+        gc.collect()
+
+        elapsed = time.time() - start_time
+        done = len(all_sims)
+        rate = done / elapsed if elapsed > 0 else 0
+        remaining = (total_runs - done) / rate if rate > 0 else 0
+        pct = done / total_runs * 100
+        print(f'  Progress: {done}/{total_runs} ({pct:.0f}%) | '
+              f'Elapsed: {elapsed/60:.1f} min | Remaining: ~{remaining/60:.1f} min')
+
+    elapsed_total = time.time() - start_time
+    print(f'\nCompleted {total_runs} sims in {elapsed_total/60:.1f} min '
+          f'({elapsed_total:.1f}s); avg {elapsed_total/total_runs:.2f}s per sim')
+
+    # Optional: reduced median sim per parameter set. Preserved from the old
+    # per-par-set path -- ss.MultiSim.median() writes onto base_sim, so a fresh
+    # template sim is built per rank before .sims is overridden with the subset.
+    all_reduced = []
+    if create_reduced:
+        by_rank = {}
+        for s in all_sims:
+            by_rank.setdefault(getattr(s, 'rank', None), []).append(s)
+        rank_to_cfg = {(cfg.get('rank') or idx + 1): cfg
+                       for idx, cfg in enumerate(top_pars)}
+        for cfg_rank, subset in by_rank.items():
+            if not subset:
+                continue
+            cfg = rank_to_cfg.get(cfg_rank, {})
             try:
                 final_base = make_sim(
-                    debug=debug,
-                    seed=seed + idx * 10000,
-                    end=end,
-                    hiv_data=hiv_data,
-                    analyzers=analyzers,
-                    interventions=interventions,
-                    calib_pars=cfg_pars,
-                    model_hiv=model_hiv
+                    debug=debug, seed=seed, end=end, hiv_data=hiv_data,
+                    analyzers=analyzers, interventions=interventions,
+                    calib_pars=cfg.get('pars', calib_pars),
+                    model_hiv=model_hiv,
                 )
                 final_msim = ss.MultiSim(final_base)
-                subset = [s for s in all_sims if getattr(s, 'rank', None) == cfg_rank]
                 final_msim.sims = subset
                 final_msim.median()
                 reduced_sim = final_msim.base_sim
                 reduced_sim.rank = cfg_rank
-                reduced_sim.top_label = cfg_label
-                if cfg_mismatch is not None:
-                    reduced_sim.mismatch = cfg_mismatch
+                reduced_sim.top_label = subset[0].top_label
+                if hasattr(subset[0], 'mismatch'):
+                    reduced_sim.mismatch = subset[0].mismatch
                 all_reduced.append((final_msim, reduced_sim))
             except Exception as e:
-                if len(top_pars) <= 20:
-                    print(f'  Warning: Could not create reduced sim for rank {cfg_rank}: {e}')
-    
-    end_time = time.time()
-    elapsed_total = end_time - start_time
-    print(f'\nCompleted all {total_runs} simulations in {elapsed_total/60:.1f} minutes ({elapsed_total:.2f} seconds)')
-    print(f'Average: {elapsed_total/total_runs:.2f} seconds per simulation')
-    
+                print(f'  Warning: Could not create reduced sim for rank {cfg_rank}: {e}')
+
     return all_sims, all_reduced
 
 
