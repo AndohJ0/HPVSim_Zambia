@@ -143,8 +143,13 @@ def load_calib(location=None, do_plot=True, which_pars=0, save_pars=True, filest
     filename = f'{fnlocation}_calib{filestem}'
     calib = sc.load(f'results/{filename}.obj')
     if do_plot:
-        sc.fonts(add=sc.thisdir(aspath=True) / 'Libertinus Sans')
-        sc.options(font='Libertinus Sans')
+        # The font is not shipped with the repo; using it unconditionally emits
+        # a "font family not found" warning per text element and silently falls
+        # back to the default anyway.
+        fontdir = sc.thisdir(aspath=True) / 'Libertinus Sans'
+        if fontdir.exists():
+            sc.fonts(add=fontdir)
+            sc.options(font='Libertinus Sans')
         # v3: Calibration.plot() is the inherited starsim one, which needs
         # components/check_fit and returns nothing useful on the data= path.
         fig = hpv.plot_calibration(calib)
@@ -171,7 +176,11 @@ def plot_extra_results(calib, start_year=1985, year=2020):
     """
     best = rf.get_top_calibrated_pars(calib, n=1)[0]['pars']
     analyzer = rf.create_age_analyzer(year=year)
-    sim = rf.make_sim(calib_pars=best, stop=year, analyzers=[analyzer], debug=debug)
+    # stop past the reported year: annualised results (the ASR, and the
+    # HIV-stratified rates as of hpvsim 3.2) read low in a partly covered
+    # final year, since a fraction of the year's events is divided by a full
+    # year of person-time.
+    sim = rf.make_sim(calib_pars=best, stop=year + 1, analyzers=[analyzer], debug=debug)
     sim.run()
 
     res = sim.results.all_hpv

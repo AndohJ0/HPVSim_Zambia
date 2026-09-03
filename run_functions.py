@@ -157,15 +157,9 @@ def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, 
     hiv_pars = dict(p_effective_art=ss.bernoulli(p=0.9)) if model_hiv else None
 
     if calib_pars is not None:
-        # With HIV off there is no module for the 'hiv' scope to route to, and
-        # route_pars is strict about unmatched keys. Dropping it is what the
-        # no-HIV counterfactual means: HIV was never introduced, so its
-        # parameters have nothing to act on. Both key forms are handled, since
-        # calibrated pars arrive flat-dotted ('hiv.rel_sus_lo') while
-        # hand-written ones are usually nested ({'hiv': {...}}).
-        if not model_hiv:
-            calib_pars = {k: v for k, v in calib_pars.items()
-                          if k != 'hiv' and not str(k).startswith('hiv.')}
+        # HIV-scoped pars in a no-HIV sim are skipped by hpv.route_pars with a
+        # warning (hpvsim >= 3.2), so one calibrated parameter set drives every
+        # scenario without per-scenario filtering here.
         pars = sc.mergedicts(pars, calib_pars)
 
     if model_hiv and hiv_data is None:
@@ -346,8 +340,11 @@ def run_multi_sim(
     
     for idx, cfg in enumerate(top_pars):
         cfg_pars = cfg.get('pars', calib_pars)
-        cfg_rank = cfg.get('rank', idx + 1)
-        cfg_label = cfg.get('label', f'top_{cfg_rank:02d}')
+        # `or idx + 1`, not a dict default: the no-top_pars path below sets
+        # 'rank': None explicitly, so .get()'s default never fires and the
+        # label f-string used to raise on None.
+        cfg_rank = cfg.get('rank') or idx + 1
+        cfg_label = cfg.get('label') or f'top_{cfg_rank:02d}'
         cfg_mismatch = cfg.get('mismatch', None)
         
         # Show parameter set info only for small runs or every 10 sets for large runs
