@@ -2,7 +2,8 @@
 
 An [HPVsim](https://hpvsim.org) model of cervical cancer for Zambia, with HIV
 co-infection dynamics, calibrated to national HIV, ART, and cancer incidence
-data. Built on **hpvsim v2.x** (not yet migrated to v3.x).
+data. Built on **hpvsim v3.2** with **stisim v1.6** (HIV co-infection via
+`hpv.Sim(model_hiv='incidence')`).
 
 ## Install
 
@@ -10,7 +11,7 @@ data. Built on **hpvsim v2.x** (not yet migrated to v3.x).
 pip install -r requirements.txt
 ```
 
-Requires `hpvsim==2.2.6`.
+Requires `hpvsim[hiv]>=3.2` and `stisim[hiv]>=1.6`.
 
 ## What's here
 
@@ -26,8 +27,12 @@ Requires `hpvsim==2.2.6`.
 
 ## Calibration status
 
-A calibration is already committed: `results/zambia_calib.obj` (full calibration
-object) and `results/zambia_pars_nov06.obj` (best-fit parameters).
+A first-pass v3.2 calibration is committed at `results/zambia_calib.obj`
+(top-50 shrunk, ~140 KB). Rerun `run_calibration.py` for a fresh calibration,
+or regenerate individual sims from the shrunk artifact via `hpv.make_calib_sims`.
+The legacy v2 best-pars file `results/zambia_pars_nov06.obj` is preserved for
+reference — see `VM_HANDOFF.md` and `run_functions.v2_calib_pars_to_v3()` for
+the v2 → v3 translation.
 
 ## How to run
 
