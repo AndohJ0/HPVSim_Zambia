@@ -7,21 +7,13 @@ hpvsim 2.2.6 baseline comparison has been run (results below).
 Five things remain. (1) is the only one with real scientific risk; (2)–(5) are
 mechanical but order-dependent.
 
-## Read this first: the figures in `figures/` are meaningless
+## 1. Generate the figures, then sanity-check them against the manuscript
 
-They do **not** disagree with the manuscript — they were never a real run. The
-committed PNGs came from a plumbing test: **1 parameter set, 1 seed,
-`debug=1`** (1,000 agents, `dt=1.0`, start 1980). Crude cancer incidence in
-2020 reads **0.6 per 100k** against the manuscript's ~22, because a
-1,000-agent sim starting in 1980 cannot produce a cervical cancer epidemic.
-
-`results/zambia_figure_*.csv` is from the same test — check `par_set` in it
-before believing anything downstream. Only `supplementary_figure1_posteriors.png`
-used the real 50-set calibration and is worth looking at.
-
-So do not start by hunting for a bug. Start by producing a real run.
-
-## 1. Sanity-check the analysis against the manuscript
+**Start by producing the figures at full scale.** Nothing figure-related is
+committed — `figures/` and `results/*_figure_*.csv` are both gitignored — so
+there is no output in the repo to inspect or debug. The scripts have only ever
+been run as a plumbing test (one parameter set, one seed, `debug=1`), which
+proves they execute and nothing about the science.
 
 The bar Robyn set: **parameter values will have changed and that is fine, but
 the outputs, results and narrative should not move much.** Two reasons the
@@ -41,6 +33,9 @@ defect to fix:
 python run_counterfactuals.py --run-sim --n-pars 100 --n-seeds 100   # VM
 python plot_figures.py                                              # local
 ```
+
+Check `par_set` in the CSVs afterwards to confirm the ensemble is the size you
+asked for rather than silently smaller.
 
 `--n-pars 100` needs a calibration holding ≥100 sets; the current one holds 50
 because `run_calibration.py` calls `shrink(n_results=50)`. Either raise that
@@ -210,8 +205,6 @@ in 2.2.6 and needs to understand what changed. It must say, plainly:
 
 ## Do not
 
-- Do not trust anything in `figures/` or `results/zambia_figure_*.csv` until
-  regenerated at full scale.
 - Do not read `sim.results.hiv.n_*` age strata — hpvsim suppresses them as of
   3.2 precisely because they are raw agent counts. Use `hpv.by_age` or
   `analyzers.CancerByAgeHIV`.
