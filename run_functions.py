@@ -119,13 +119,12 @@ def _hiv_data(location=LOCATION):
 def hiv_counts(sim, lo=None, hi=None):
     """Scale-correct HIV headcount and prevalence, optionally for an age band.
 
-    Do NOT use ``sim.results.hiv.n_infected`` (or the other ``hiv.n_*``
-    stocks) at ``ms_agent_ratio > 1``: they count agents at full weight and
-    then multiply by ``pop_scale``, ignoring that grow-multiscale fine agents
-    carry ``scale = 1/ratio``. At Zambia's ratio of 100 that over-reports HIV
-    by ~6x. Ratios of two equally-biased stocks -- ``p_on_art`` for instance --
-    are unaffected, and everything ``analyzers.CancerByAgeHIV`` produces is
-    already scale-weighted.
+    As of hpvsim 3.2 the all-age HIV results (``n_infected``, ``prevalence``,
+    ``prevalence_15_49``, ``p_on_art``, the flows) are scale-weighted by
+    ``hpv.HIV.update_results``, so read those directly. This helper remains
+    useful for an ARBITRARY age band, because stisim's own sex-by-age strata
+    (``n_infected_f_15_20`` and friends) are still raw agent counts and
+    over-report at ``ms_agent_ratio > 1``.
 
     Returns (n_hiv, prevalence) in real-population units.
     """
