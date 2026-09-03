@@ -13,17 +13,12 @@ import pandas as pd
 
 # Debug switch
 debug = 0  # Run with smaller population sizes and in serial
-do_shrink = True  # Do not keep people when running sims (saves memory)
-
-# Save settings
-do_save = True
-save_plots = True
 
 
 #%% Simulation creation functions
 def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=10, end=None, analyzers=None,
              datafile=None, hiv_datafile=None, art_datafile=None):
-    """"
+    """
     Define parameters, analyzers, and interventions for the simulation
     """
     if end is None:
@@ -45,7 +40,7 @@ def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=10,
             'm': np.array([0.0, 0.25, 0.6, 0.25, 0.05, 0.01, 0.0005, 0]),
             'f': np.array([0.0, 0.35, 0.7, 0.25, 0.05, 0.01, 0.0005, 0]),
         },
-        ms_agent_ratio=100,
+        ms_agent_ratio=100,  # Downsampling ratio between modeled and real-world agent counts
         verbose=0.0,
         rand_seed=seed,
         model_hiv=True,
@@ -98,7 +93,7 @@ def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=10,
     )
 
     # HIV parameters
-    pars.hiv_pars['art_failure_prob'] = 0.1
+    pars.hiv_pars['art_failure_prob'] = 0.1  # Probability ART fails to suppress viral load
 
     # If calibration parameters have been supplied, use them here
     if calib_pars is not None:
@@ -107,7 +102,7 @@ def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=10,
 
     # Create the sim
     sim = hpv.Sim(
-        pars=pars, interventions=interventions, rand_seed=seed,
+        pars=pars, interventions=interventions, rand_seed=seed, analyzers=analyzers,
         datafile=datafile, hiv_datafile=hiv_datafile, art_datafile=art_datafile
     )
 
@@ -117,14 +112,18 @@ def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=10,
 #%% Simulation running functions
 def run_sim(
         analyzers=None, interventions=None, debug=0, seed=1, verbose=0.2,
-        do_save=False, end=2020, calib_pars=None, hiv_datafile=None, art_datafile=None):
+        do_save=False, end=2020, calib_pars=None, hiv_datafile=None, art_datafile=None,
+        location='zambia'):
+    """Build and run a single Zambia sim, optionally saving it to results/zambia.sim."""
 
     dflocation = location.replace(' ', '_')
     # Make arguments
     if hiv_datafile is None:
+        # NOTE: filenames use the "_updated" HIV-mortality datafiles (matching run_functions.py);
+        # confirm with collaborator this matches the datafiles used for committed results.
         hiv_datafile = [f'data/{dflocation}_hiv_incidence_updated.csv',
-                        f'data/{dflocation}_female_hiv_mortality.csv',
-                        f'data/{dflocation}_male_hiv_mortality.csv']
+                        f'data/{dflocation}_female_hiv_mortality_updated.csv',
+                        f'data/{dflocation}_male_hiv_mortality_updated.csv']
     if art_datafile is None:
         art_datafile = [f'data/{dflocation}_art_coverage.csv']
 
@@ -166,16 +165,15 @@ if __name__ == '__main__':
 
     location = 'zambia'
     calib_pars = None #sc.loadobj(f'results/{location}_calib_may20_pars.obj')
-    
 
     # Run and plot a single simulation
     # Takes <1min to run
     if 'run_single' in to_run:
         sim = run_sim(calib_pars=calib_pars, end=2020, debug=debug)  # Run the simulation
         sim.to_excel('zambia_sim.xlsx')
-        df = pd.read_excel('zambia_sim.xlsx').to_csv('zambia_sim.csv')
+        pd.read_excel('zambia_sim.xlsx').to_csv('zambia_sim.csv', index=False)
         sim.plot()  # Plot the simulation
- 
+
     # Example of how to run a scenario with and without vaccination
     # Takes ~2min to run
     if 'run_scenario' in to_run:

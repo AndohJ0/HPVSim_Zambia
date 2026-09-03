@@ -4,20 +4,17 @@ including analyzers and plotting the results
 """
 
 # Standard imports
-import numpy as np
 import sciris as sc
-import hpvsim as hpv
-import pylab as pl
-import pandas as pd
-import time 
 
-#import helper functions
-from run_functions import *
+# Helper functions from this repository
+from run_functions import (
+    get_top_calibrated_pars, run_multi_sim_optimized_art, run_multi_sim_with_analyzers,
+    export_raw_sim_series, aggregate_and_export, create_age_analyzer, aggregate_analyzer_results,
+)
 
 # Save settings
 do_save = True
-save_plots = True
-art_coverage_scale = 0  # Set to 0 for counterfactual without ART, etc.
+art_coverage_scale = 0  # ART coverage multiplier: 0 = counterfactual without ART, 1 = actual coverage
 include_hiv = True  # Toggle HIV co-infection dynamics
 
 
@@ -33,14 +30,20 @@ if __name__ == '__main__':
     ]
 
     location = 'zambia'
-    calib = sc.loadobj(f'results/{location}_calib.obj')
+    calib_file = f'results/{location}_calib.obj'
+    try:
+        calib = sc.loadobj(calib_file)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f'{calib_file} not found -- run run_calibration.py first to produce it.'
+        )
 
     if 'sim_with_top_pars' in to_run:
-        top_pars = get_top_calibrated_pars(calib, n=100)
+        top_pars = get_top_calibrated_pars(calib, n=100)  # Use the 100 best-fitting parameter sets
         sims, _ = run_multi_sim_optimized_art(
             top_pars=top_pars,
             end=2025,
-            n_runs=100,
+            n_runs=100,  # Runs (different seeds) per parameter set
             batch_size=25,
             art_coverage_scale=art_coverage_scale,
             model_hiv=include_hiv,
@@ -78,7 +81,8 @@ if __name__ == '__main__':
         # Create age-stratified analyzer
         az1 = create_age_analyzer()
         # Run simulations with analyzers
-        sims, _ = run_multi_sim_with_analyzers(top_pars=top_pars, end=2025, analyzers=az1, n_runs=100)
+        sims, _ = run_multi_sim_with_analyzers(top_pars=top_pars, end=2025, analyzers=az1, n_runs=100,
+                                               model_hiv=include_hiv)
         # Aggregate and export standard metrics
         aggregate_and_export(sims, location, save=do_save)
         # Aggregate analyzer results
