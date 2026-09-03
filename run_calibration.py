@@ -32,8 +32,8 @@ debug = False  # If True, this will do smaller runs that can be run locally for 
 do_save = True
 
 # Run settings for calibration (dependent on debug)
-n_trials = [5000, 10][debug]  # How many trials to run for calibration
-n_workers = [50, 1][debug]  # How many cores to use
+n_trials = [1000, 10][debug]  # How many trials to run for calibration
+n_workers = [80, 1][debug]  # How many cores to use
 
 
 ########################################################################
@@ -126,7 +126,7 @@ def run_calib(location=None, n_trials=None, n_workers=None,
     if do_save:
         # shrink() drops the full sims, leaving a small object that stays
         # loadable (and committable) without the original environment.
-        sc.saveobj(f'results/{filename}.obj', calib.shrink())
+        sc.saveobj(f'results/{filename}.obj', calib.shrink(n_results=50))
 
     print(f'Best pars are {calib.best_pars}')
 
