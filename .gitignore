@@ -8,3 +8,6 @@ figures/
 
 # The published manuscript figures are source material, not generated output
 !docs/figures_original/*.png
+
+# Figure data: regenerable VM output, transferred by rsync rather than git
+results/*_figure_*.csv

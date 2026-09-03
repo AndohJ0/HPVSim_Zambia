@@ -157,6 +157,15 @@ def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, 
     hiv_pars = dict(p_effective_art=ss.bernoulli(p=0.9)) if model_hiv else None
 
     if calib_pars is not None:
+        # With HIV off there is no module for the 'hiv' scope to route to, and
+        # route_pars is strict about unmatched keys. Dropping it is what the
+        # no-HIV counterfactual means: HIV was never introduced, so its
+        # parameters have nothing to act on. Both key forms are handled, since
+        # calibrated pars arrive flat-dotted ('hiv.rel_sus_lo') while
+        # hand-written ones are usually nested ({'hiv': {...}}).
+        if not model_hiv:
+            calib_pars = {k: v for k, v in calib_pars.items()
+                          if k != 'hiv' and not str(k).startswith('hiv.')}
         pars = sc.mergedicts(pars, calib_pars)
 
     if model_hiv and hiv_data is None:
