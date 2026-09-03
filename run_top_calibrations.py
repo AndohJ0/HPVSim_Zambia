@@ -8,7 +8,7 @@ import sciris as sc
 
 # Helper functions from this repository
 from run_functions import (
-    get_top_calibrated_pars, run_multi_sim_optimized_art, run_multi_sim_with_analyzers,
+    get_top_calibrated_pars, run_multi_sim,
     export_raw_sim_series, aggregate_and_export, create_age_analyzer, aggregate_analyzer_results,
 )
 
@@ -50,7 +50,7 @@ if __name__ == '__main__':
 
     if 'sim_with_top_pars' in to_run:
         top_pars = get_top_calibrated_pars(calib, n=100)  # Use the 100 best-fitting parameter sets
-        sims, _ = run_multi_sim_optimized_art(
+        sims, _ = run_multi_sim(
             top_pars=top_pars,
             end=2025,
             n_runs=100,  # Runs (different seeds) per parameter set
@@ -92,8 +92,8 @@ if __name__ == '__main__':
         # and must fall inside the sim window.
         az1 = create_age_analyzer(year=2020)
         # Run simulations with analyzers
-        sims, _ = run_multi_sim_with_analyzers(top_pars=top_pars, end=2025, analyzers=[az1], n_runs=100,
-                                               model_hiv=include_hiv)
+        sims, _ = run_multi_sim(top_pars=top_pars, end=2025, analyzers=[az1], n_runs=100,
+                                model_hiv=include_hiv)
         # Aggregate and export standard metrics
         aggregate_and_export(sims, location, save=do_save)
         # Aggregate analyzer results

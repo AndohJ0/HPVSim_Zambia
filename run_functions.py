@@ -291,27 +291,34 @@ def get_top_calibrated_pars(calib, n=None):
 def run_multi_sim(
         analyzers=None, interventions=None, debug=0, seed=1, verbose=0.5,
         do_save=False, end=2020, calib_pars=None, hiv_data=None,
-        n_runs=10, batch_size=None, top_pars=None, create_reduced=True, model_hiv=True):
-    """Run multiple simulations with analyzers using optimized batch processing across top calibrated parameter sets.
-    
-    Optimized for large numbers of parameter sets (e.g., 100 parameter sets with 10 runs each).
+        n_runs=10, batch_size=None, top_pars=None, create_reduced=True,
+        art_coverage_scale=1.0, model_hiv=True):
+    """Run multiple simulations across one or more calibrated parameter sets.
+
+    Handles both the single-par-set case (calib_pars=<dict>, top_pars=None) and
+    the top-N-par-sets case (top_pars=[{'pars': ..., 'rank': ...}, ...]).
+    Batches runs to cap memory; returns (all_sims, all_reduced).
+
+    art_coverage_scale multiplies the ART coverage curve in-memory (1.0 = as-is,
+    0.0 = counterfactual-without-ART); the base sim is otherwise unchanged.
     """
-    
+
     # Normalize top_pars input
     if top_pars is None:
         top_pars = [{'pars': calib_pars, 'rank': None}]
     elif isinstance(top_pars, dict):
         top_pars = [top_pars]
-    
+
     # Optimize batch_size: use smaller batches for many parameter sets to save memory
     if batch_size is None:
         if len(top_pars) > 50:
             batch_size = min(10, n_runs)  # Smaller batches for many parameter sets
         else:
             batch_size = min(25, n_runs)  # Standard batch size
-    
+
     if hiv_data is None:
         hiv_data = _hiv_data()
+    hiv_data = _scale_art_coverage(hiv_data, art_coverage_scale)
 
     total_runs = n_runs * len(top_pars)
     print(f'Running {total_runs} simulations ({n_runs} per parameter set, {len(top_pars)} parameter sets)')
@@ -447,32 +454,6 @@ def _scale_art_coverage(hiv_data, scale):
     out['art_coverage'] = art
     return out
 
-
-def run_multi_sim_optimized_art(
-        analyzers=None, interventions=None, debug=0, seed=1, verbose=0.5,
-        do_save=False, end=2020, calib_pars=None, hiv_data=None,
-        n_runs=10, batch_size=None, top_pars=None, create_reduced=True,
-        art_coverage_scale=1.0, model_hiv=True):
-    """Wrapper around run_multi_sim with optional ART coverage scaling and HIV toggling."""
-    if hiv_data is None:
-        hiv_data = _hiv_data()
-
-    return run_multi_sim(
-        analyzers=analyzers,
-        interventions=interventions,
-        debug=debug,
-        seed=seed,
-        verbose=verbose,
-        do_save=do_save,
-        end=end,
-        calib_pars=calib_pars,
-        hiv_data=_scale_art_coverage(hiv_data, art_coverage_scale),
-        n_runs=n_runs,
-        batch_size=batch_size,
-        top_pars=top_pars,
-        create_reduced=create_reduced,
-        model_hiv=model_hiv,
-    )
 
 """ 4. q25_func and q75_func --> Functions to calculate 25th and 75th percentiles """
 def q25_func(data):
@@ -660,90 +641,7 @@ def aggregate_analyzer_results(sims, year=2020):
     return combined_df, aggregate_stats
 
 
-""" 8. run_multi_sim_with_analyzers --> Function to run multiple simulations with analyzers """
-
-def run_multi_sim_with_analyzers(
-        analyzers=None, interventions=None, debug=0, seed=1, verbose=0.5,
-        do_save=False, end=2020, calib_pars=None, hiv_data=None,
-        n_runs=100, batch_size=None, top_pars=None, create_reduced=True, model_hiv=True):
-    """Run multiple simulations with analyzers using optimized batch processing.
-
-    Optimized for large numbers of parameter sets (e.g., 100 parameter sets with 10 runs each).
-    When top_pars is provided, automatically uses optimized batch processing.
-    """
-
-    # If top_pars is provided, use run_multi_sim which handles multiple parameter sets
-    if top_pars is not None:
-        return run_multi_sim(
-            analyzers=analyzers,
-            interventions=interventions,
-            debug=debug,
-            seed=seed,
-            verbose=verbose,
-            do_save=do_save,
-            end=end,
-            calib_pars=calib_pars,
-            hiv_data=hiv_data,
-            n_runs=n_runs,
-            batch_size=batch_size,
-            top_pars=top_pars,
-            create_reduced=create_reduced,
-            model_hiv=model_hiv
-        )
-
-    # Otherwise, run with single parameter set (original behavior)
-    if hiv_data is None:
-        hiv_data = _hiv_data()
-
-    # Set default batch_size if not provided
-    if batch_size is None:
-        batch_size = min(25, n_runs)
-
-    print(f'Running {n_runs} simulations with analyzers in batches of {batch_size}...')
-    start_time = time.time()
-    
-    all_sims = []
-    batch_num = 0
-    
-    for batch_start in range(0, n_runs, batch_size):
-        batch_num += 1
-        batch_end = min(batch_start + batch_size, n_runs)
-        batch_runs = batch_end - batch_start
-        
-        print(f'Processing batch {batch_num}: runs {batch_start+1}-{batch_end} ({batch_runs} simulations)')
-        
-        # Create fresh base sim for each batch to avoid memory accumulation
-        base_sim = make_sim(
-            debug=debug,
-            seed=seed + batch_start,  # Use different seeds for each batch
-            end=end,
-            hiv_data=hiv_data,
-            analyzers=analyzers,
-            interventions=interventions,
-            calib_pars=calib_pars,
-            model_hiv=model_hiv
-        )
-        base_sim['verbose'] = verbose
-
-        # Create and run MultiSim for this batch
-        msim = ss.MultiSim(base_sim)
-        msim.run(n_runs=batch_runs)
-
-        # Store results from this batch
-        all_sims.extend(msim.sims)
-        
-        # Force garbage collection to free memory
-        del msim, base_sim
-        gc.collect()
-        
-        print(f'Completed batch {batch_num} ({batch_runs} simulations)')
-    
-    end_time = time.time()
-    print(f'Completed all {n_runs} simulations in {end_time - start_time:.2f} seconds')
-    
-    return all_sims
-
-""" 9. run_single_par_set --> Function to run simulations for a single parameter set (for SLURM job arrays) """
+""" 8. run_single_par_set --> Function to run simulations for a single parameter set (for SLURM job arrays) """
 
 def run_single_par_set(par_set, analyzers=None, interventions=None, debug=0, seed=1, verbose=0.5,
                        do_save=False, end=2020, hiv_data=None,
@@ -762,7 +660,7 @@ def run_single_par_set(par_set, analyzers=None, interventions=None, debug=0, see
     print(f"{'='*80}\n")
     
     # Run simulations with this parameter set
-    sims = run_multi_sim_with_analyzers(
+    sims, _ = run_multi_sim(
         analyzers=analyzers,
         interventions=interventions,
         debug=debug,
