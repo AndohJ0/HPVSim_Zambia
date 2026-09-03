@@ -25,11 +25,22 @@ import matplotlib.pyplot as plt
 LOCATION = 'zambia'
 FIGDIR = 'figures'
 
-# Fixed assignment, never cycled: scenario -> (colour, label).
+# Rolling-window (years) applied to the time-series panels (Figure 2 and
+# Figure 3a) before plotting: cancer counts per year are stochastic at
+# modest ensemble sizes, and the manuscript's smooth curves came from much
+# larger ensembles. Applied to the median, lo, and hi columns per group so
+# the IQR band and the median move together.
+SMOOTH_WINDOW = 3
+
+# Fixed assignment, never cycled: scenario -> (colour, label). Matches the
+# manuscript palette so the reproduced figure aligns visually with what John
+# published. The published green/red pair fails a colourblind check at deutan
+# delta-E 5.3, which is what the earlier Okabe-Ito palette was picked to fix;
+# see git history if the colourblind concern re-surfaces.
 SCENARIOS = {
-    'no_hiv':     ('#0072B2', 'Scenario 1: No HIV'),
-    'no_art':     ('#E69F00', 'Scenario 2: No ART'),
-    'status_quo': ('#009E73', 'Status Quo'),
+    'no_hiv':     ('#4A90D9', 'Scenario 1: No HIV'),
+    'no_art':     ('#7FB77E', 'Scenario 2: No ART'),
+    'status_quo': ('#D9455F', 'Status Quo'),
 }
 HIV_STATUS = {
     'with_hiv': ('#D95F0E', 'Women with HIV'),
@@ -62,6 +73,16 @@ def _quantiles(df, index):
     g = df.groupby(index)['value']
     return pd.DataFrame({'median': g.median(), 'lo': g.quantile(0.25),
                          'hi': g.quantile(0.75)}).reset_index()
+
+
+def _smooth(s, window=SMOOTH_WINDOW, cols=('median', 'lo', 'hi')):
+    """Centered rolling mean over `window` years; edges use whatever data is
+    available so the curve reaches both ends of the plotted range."""
+    out = s.copy()
+    for c in cols:
+        if c in out.columns:
+            out[c] = out[c].rolling(window=window, center=True, min_periods=1).mean()
+    return out
 
 
 def _targets(fname, name):
@@ -158,6 +179,7 @@ def figure2(ts, start=1990, stop=2025):
         s = q[q['scenario'] == name].sort_values('year')
         if s.empty:
             continue
+        s = _smooth(s)
         ax.fill_between(s['year'], s['lo'], s['hi'], color=colour, alpha=0.2, linewidth=0)
         ax.plot(s['year'], s['median'], color=colour, linewidth=2, label=label)
     ax.set_xlabel('Year')
@@ -178,7 +200,7 @@ def figure3(ts, by_age, start=1990, stop=2025, year=2025):
         s = _quantiles(df[df['metric'] == f'cancer_incidence_{key}'], ['year'])
         if s.empty:
             continue
-        s = s.sort_values('year')
+        s = _smooth(s.sort_values('year'))
         axes[0].fill_between(s['year'], s['lo'], s['hi'], color=colour,
                              alpha=0.2, linewidth=0)
         axes[0].plot(s['year'], s['median'], color=colour, linewidth=2, label=label)
