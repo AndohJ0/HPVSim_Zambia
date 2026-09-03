@@ -116,6 +116,33 @@ def _hiv_data(location=LOCATION):
                 art_coverage=art[['age', 'sex', 'year', 'coverage']])
 
 
+def hiv_counts(sim, lo=None, hi=None):
+    """Scale-correct HIV headcount and prevalence, optionally for an age band.
+
+    Do NOT use ``sim.results.hiv.n_infected`` (or the other ``hiv.n_*``
+    stocks) at ``ms_agent_ratio > 1``: they count agents at full weight and
+    then multiply by ``pop_scale``, ignoring that grow-multiscale fine agents
+    carry ``scale = 1/ratio``. At Zambia's ratio of 100 that over-reports HIV
+    by ~6x. Ratios of two equally-biased stocks -- ``p_on_art`` for instance --
+    are unaffected, and everything ``analyzers.CancerByAgeHIV`` produces is
+    already scale-weighted.
+
+    Returns (n_hiv, prevalence) in real-population units.
+    """
+    ppl = sim.people
+    alive = ppl.alive.values
+    w = ppl.scale.values
+    if lo is not None or hi is not None:
+        age = ppl.age.values
+        alive = alive & (age >= (lo if lo is not None else -np.inf)) \
+                      & (age < (hi if hi is not None else np.inf))
+    infected = sim.diseases.hiv.infected.values
+    denom = float((w * alive).sum())
+    n_hiv = float((w * (alive & infected)).sum())
+    scale = sim.pars.pop_scale
+    return n_hiv * scale, (n_hiv / denom if denom else 0.0)
+
+
 def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, stop=None,
              analyzers=None, datafile=None, hiv_data=None, model_hiv=True, end=None):
     """Define parameters, analyzers, and interventions for the simulation.

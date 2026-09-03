@@ -44,6 +44,24 @@ def test_translated_v2_pars_build_a_sim():
     assert sim.diseases.hiv.pars.rel_reactivation_lo == 3
 
 
+def test_hiv_counts_are_scale_correct():
+    """hiv_counts weights by per-agent scale; sim.results.hiv.n_infected does not.
+
+    At ms_agent_ratio > 1 the stisim stock counts fine agents at full weight and
+    then applies pop_scale, over-reporting HIV. Prevalence must stay a fraction.
+    """
+    sim = rf.make_sim(debug=1, stop=1990, seed=1)
+    sim.run()
+    n_hiv, prev = rf.hiv_counts(sim)
+    assert 0 < prev < 1
+    assert n_hiv > 0
+    # 15-49 is a subset, so its headcount cannot exceed the all-age one.
+    n_adult, _ = rf.hiv_counts(sim, 15, 50)
+    assert n_adult <= n_hiv
+    # The unweighted result is the biased one, and is strictly larger here.
+    assert float(sim.results.hiv.n_infected[-1]) > n_hiv
+
+
 def test_cancer_by_age_hiv_analyzer():
     """The Layer-3 analyzer reports age-binned counts split by HIV status."""
     az = CancerByAgeHIV(years=1985)
