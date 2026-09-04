@@ -156,9 +156,9 @@ def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, 
     if end is not None:  # v2 name; v3 uses stop=
         stop = end
     if stop is None:
-        stop = 2100
-    if calib:
-        stop = 2020
+        # Calibration default runs one year past the latest target (2021 IRR by
+        # age), so the sim window contains the full reporting year at dt=0.25.
+        stop = 2022 if calib else 2100
 
     dt = [0.25, 1.0][debug]
 
@@ -708,5 +708,57 @@ def run_single_par_set(par_set, analyzers=None, interventions=None, debug=0, see
             print(f'Saved analyzer results for rank {rank}')
         except Exception as e:
             print(f'Warning: Could not aggregate analyzer results for rank {rank}: {e}')
-    
+
     return sims
+
+
+""" 9. calib_eval_fn --> combined calibration objective (standard targets + IRR by age) """
+
+def calib_eval_fn(sim, data, irr_data=None, weights=None, gof_kwargs=None,
+                  irr_year=2021, irr_weight=1.0, irr_min_age=25,
+                  irr_max_age=75):
+    """Combined hpv.Calibration objective: the default data= term plus a
+    HIV-stratified rate-ratio-by-age term computed off the CancerByAgeHIV
+    analyzer.
+
+    Targets are read from a long-format CSV (columns: year, name, age, sex,
+    genotype, value) with name=cancer_hiv_rate_ratios. Placeholder rows with
+    value == 1 (age 0, 15 in Zambia's file) are dropped, and only ages in
+    [irr_min_age, irr_max_age] are fitted: below 25 the sim has near-zero
+    cancer in either HIV stratum so the ratio is noisy or degenerate (both
+    sides can be 0), and above 75 the surviving-WWH denominator is tiny.
+    This matches the manuscript's Figure 1(c), which restricts the same
+    axis to 25+.
+
+    hpv.Calibration's `data=` path can't express an HIV-stratified by-age
+    target -- its by_age analyzer has no HIV split -- so this eval_fn is
+    used with eval_fn=/eval_kw= instead of data=; _setup_analyzers must be
+    called manually first to install the standard by_age analyzer.
+    """
+    from hpvsim.calibration import default_eval_fn, compute_gof
+    standard = default_eval_fn(sim, data, weights=weights, gof_kwargs=gof_kwargs)
+    if irr_data is None:
+        return float(standard)
+
+    az = next((a for a in sim.analyzers.values()
+               if isinstance(a, CancerByAgeHIV)), None)
+    if az is None:
+        return float(standard)
+
+    modeled_df = az.to_dataframe(int(irr_year))
+    bin_lo = np.array([int(str(b).split('-')[0]) for b in modeled_df['bins']])
+    modeled_by_age = dict(zip(bin_lo, modeled_df['cancer_rate_ratio']))
+
+    fit = irr_data[(irr_data['value'] > 1.001)
+                   & (irr_data['age'] >= irr_min_age)
+                   & (irr_data['age'] <= irr_max_age)]
+    ages = fit['age'].astype(int).values
+    targets = fit['value'].astype(float).values
+    modeled = np.array([modeled_by_age.get(a, np.nan) for a in ages], dtype=float)
+    mask = np.isfinite(modeled) & (modeled > 0)
+    if not mask.any():
+        return float(standard)
+
+    irr_gof = compute_gof(targets[mask], modeled[mask],
+                          use_frac=True, as_scalar='sum')
+    return float(standard) + float(irr_weight) * float(irr_gof)

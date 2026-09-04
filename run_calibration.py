@@ -14,6 +14,7 @@ os.environ.update(
 
 # Standard imports
 import numpy as np
+import pandas as pd
 import sciris as sc
 import starsim as ss
 import hpvsim as hpv
@@ -45,32 +46,37 @@ def run_calib(location=None, n_trials=None, n_workers=None,
     assert location is not None, 'location must be specified'
     dflocation = location.replace(' ', '_')
 
-    sim = rf.make_sim(calib=True, debug=debug)
+    # Attach the age-by-HIV analyzer at the calibration's IRR year so
+    # calib_eval_fn can read a cancer_rate_ratio-by-age row off it per trial.
+    from analyzers import CancerByAgeHIV
+    irr_year = 2021
+    sim = rf.make_sim(calib=True, debug=debug,
+                      analyzers=[CancerByAgeHIV(years=[irr_year])])
 
-    # Targets. v3 replaced datafiles= with data=; long-format CSVs
+    # Standard targets. v3 replaced datafiles= with data=; long-format CSVs
     # (year, name, age, sex, genotype, value) are parsed by hpv.data.loaders,
     # which routes a file with an age column to all_hpv.<name>.<bin> and one
     # without to the scalar all_hpv.<name>.
-    #
-    # data/{loc}_cancer_rate_ratios.csv is deliberately NOT included: its
-    # `cancer_hiv_rate_ratios` name has no v3 equivalent that data= can reach.
-    # v3 only exposes an all-age all_hpv.cancer_rate_ratio, and age-stratified
-    # targets are served by an auto-created by_age analyzer whose key whitelist
-    # has no HIV-stratified entries. Fitting it needs a custom eval_fn built on
-    # analyzers.CancerByAgeHIV -- see hpvsim's tests/regression/calibrate_rwanda.py
-    # for the hand-rolled-objective pattern.
     data = hpv.data.load_calib_data([
         f'data/{dflocation}_cancer_cases.csv',  # Globocan
         f'data/{dflocation}_asr_cancer_incidence.csv',
     ])
 
+    # Age-by-HIV rate ratio targets: hpv.Calibration(data=) cannot express
+    # these (its by_age analyzer has no HIV split), so they are fed to the
+    # calibration via calib_eval_fn in run_functions.py, alongside the
+    # standard data= components. See analyzers.CancerByAgeHIV.
+    irr_data = pd.read_csv(f'data/{dflocation}_cancer_rate_ratios.csv')
+
     # Each bound is [guess, low, high, step]. v3 requires nested-by-scope keys
     # (flat dotted keys are rejected): genotype names, 'hiv', 'network' and
-    # 'cross_immunity' scope to those modules, and bare keys broadcast.
+    # 'cross_immunity' scope to those modules, and bare keys broadcast. Latency
+    # (hpv_control_prob, hpv_reactivation) is left out on purpose: the paper's
+    # supplementary materials say "we do not model latency", and letting the
+    # calibration free it against 2020 cancer only picked extreme unidentified
+    # values that then drove the counterfactual scenarios.
     calib_pars = dict(
         beta=[0.05, 0.02, 0.5, 0.02],
-        hpv_control_prob=[0, 0, 1, 0.25],
-        hpv_reactivation=[0.025, 0, 0.1, 0.025],
         age_risk=dict(risk=[3.2, 1, 4, 0.1],
                       age=[38, 30, 45, 1]),
         cross_immunity=dict(own_imm_hr=[0.5, 0.25, 1, 0.05]),
@@ -110,10 +116,18 @@ def run_calib(location=None, n_trials=None, n_workers=None,
         rel_reactivation_hi=[3, 2, 5, 0.5],
     )
 
+    # hpv.Calibration's __init__ short-circuits data=/eval_fn= as mutually
+    # exclusive, so the standard by_age analyzer (normally installed by the
+    # data= path) is set up manually before we hand over an eval_fn that
+    # combines the default data= term with the IRR-by-age term.
+    from hpvsim.calibration import _setup_analyzers
+    _setup_analyzers(sim, data)
     calib = hpv.Calibration(
         sim,
         calib_pars=calib_pars,
-        data=data,
+        eval_fn=rf.calib_eval_fn,
+        eval_kw=dict(data=data, irr_data=irr_data, irr_year=irr_year,
+                     irr_weight=1.0),
         total_trials=n_trials, n_workers=n_workers,
         label=f'{location}_calib',
     )

@@ -145,12 +145,13 @@ def figure1(ts, by_age, year=2020):
     # and read as a second data point.
     ax.legend(loc='lower left')
 
-    # (c) cancer incidence rate ratio by age. Restricted to 25+, as published:
-    # below that almost no cancers occur in either stratum, so the ratio is
-    # either undefined or driven by one or two events.
+    # (c) cancer incidence rate ratio by age. Restricted to 25-75, matching
+    # the manuscript: below 25 almost no cancers occur in either stratum, and
+    # above 75 the WWH denominator is a few hundred women, so a handful of
+    # events produce whiskers that dominate the y-axis and hide the signal.
     irr = sq_age[sq_age['metric'] == 'cancer_rate_ratio']
     bins_irr = [b for b in _bin_order(irr['bins'])
-                if float(str(b).split('-')[0]) >= 25]
+                if 25 <= float(str(b).split('-')[0]) <= 75]
     irr = irr[irr['bins'].isin(bins_irr)]
     _boxplot_by_bin(axes[1, 0], irr, bins_irr, 'IRR',
                     f'Cancer IRR: women with vs without HIV, {year}')
