@@ -1,0 +1,212 @@
+{
+ "_note": "Portable snapshot of v2.2.6 artefacts, taken 2026-09-02 during the v3 port. zambia_calib.obj is a SINGLE-trial debug run (1 row, mismatch 9.95), not a real calibration. Callables below were bound to the deleted v2 HIVsim class.",
+ "calib_df": [
+  {
+   "index": 0,
+   "mismatch": 9.9520050311,
+   "rel_sus_lt200": 4.0,
+   "rel_sus_gt200": 3.5,
+   "rel_sev_lt200": 4.75,
+   "rel_sev_gt200": 2.75,
+   "rel_reactivation_prob": 2.0,
+   "beta": 0.22,
+   "own_imm_hr": 0.8,
+   "age_risk_risk": 2.2,
+   "age_risk_age": 41.0,
+   "hpv_control_prob": 1.0,
+   "hpv_reactivation": 0.0,
+   "m_cross_layer": 0.3,
+   "m_partners_c_par1": 0.15,
+   "f_cross_layer": 0.45,
+   "f_partners_c_par1": 0.2
+  }
+ ],
+ "calib_best_pars": {
+  "rel_sus_lt200": 4.0,
+  "rel_sus_gt200": 3.5,
+  "rel_sev_lt200": 4.75,
+  "rel_sev_gt200": 2.75,
+  "rel_reactivation_prob": 2.0,
+  "beta": 0.22,
+  "own_imm_hr": 0.8,
+  "age_risk_risk": 2.2,
+  "age_risk_age": 41.0,
+  "hpv_control_prob": 1.0,
+  "hpv_reactivation": 0.0,
+  "m_cross_layer": 0.30000000000000004,
+  "m_partners_c_par1": 0.15000000000000002,
+  "f_cross_layer": 0.45,
+  "f_partners_c_par1": 0.2
+ },
+ "pars_nov06": {
+  "genotype_pars": {
+   "hpv16": {
+    "dur_precin": {
+     "dist": "lognormal",
+     "par1": 3,
+     "par2": 9
+    },
+    "cin_fn": {
+     "form": "logf2",
+     "k": 0.35,
+     "x_infl": 0,
+     "ttc": 50
+    },
+    "dur_cin": {
+     "dist": "lognormal",
+     "par1": 5,
+     "par2": 20
+    },
+    "cancer_fn": {
+     "method": "cin_integral",
+     "transform_prob": 0.002,
+     "form": "logf2",
+     "k": 0.25,
+     "x_infl": 0,
+     "ttc": 50
+    },
+    "rel_beta": 1.0,
+    "sero_prob": 0.75
+   },
+   "hpv18": {
+    "dur_precin": {
+     "dist": "lognormal",
+     "par1": 2.5,
+     "par2": 9
+    },
+    "dur_cin": {
+     "dist": "lognormal",
+     "par1": 5,
+     "par2": 20
+    },
+    "cin_fn": {
+     "form": "logf2",
+     "k": 0.4,
+     "x_infl": 0,
+     "ttc": 50
+    },
+    "cancer_fn": {
+     "method": "cin_integral",
+     "transform_prob": 0.002,
+     "form": "logf2",
+     "k": 0.25,
+     "x_infl": 0,
+     "ttc": 50
+    },
+    "rel_beta": 0.75,
+    "sero_prob": 0.56
+   },
+   "hi5": {
+    "dur_precin": {
+     "dist": "lognormal",
+     "par1": 2.5,
+     "par2": 9
+    },
+    "dur_cin": {
+     "dist": "lognormal",
+     "par1": 4.5,
+     "par2": 20
+    },
+    "cin_fn": {
+     "form": "logf2",
+     "k": 0.35,
+     "x_infl": 0,
+     "ttc": 50
+    },
+    "cancer_fn": {
+     "method": "cin_integral",
+     "transform_prob": 0.0015,
+     "form": "logf2",
+     "k": 0.15,
+     "x_infl": 0,
+     "ttc": 50
+    },
+    "rel_beta": 0.9,
+    "sero_prob": 0.6
+   },
+   "ohr": {
+    "dur_precin": {
+     "dist": "lognormal",
+     "par1": 2.5,
+     "par2": 9
+    },
+    "dur_cin": {
+     "dist": "lognormal",
+     "par1": 4.5,
+     "par2": 20
+    },
+    "cin_fn": {
+     "form": "logf2",
+     "k": 0.28,
+     "x_infl": 0,
+     "ttc": 50
+    },
+    "cancer_fn": {
+     "method": "cin_integral",
+     "transform_prob": 0.0015,
+     "form": "logf2",
+     "k": 0.15,
+     "x_infl": 0,
+     "ttc": 50
+    },
+    "rel_beta": 0.9,
+    "sero_prob": 0.6
+   }
+  },
+  "hiv_pars": {
+   "rel_sus": {
+    "lt200": 2.2,
+    "gt200": 2.2
+   },
+   "rel_sev": {
+    "lt200": 1.5,
+    "gt200": 1.2
+   },
+   "rel_imm": {
+    "lt200": 0.36,
+    "gt200": 0.76
+   },
+   "rel_reactivation_prob": 3,
+   "model_hiv_death": true,
+   "time_to_hiv_death_shape": 2,
+   "time_to_hiv_death_scale": "<UNPORTABLE callable: HIVsim.__init__.<locals>.<lambda>>",
+   "cd4_start": {
+    "dist": "normal",
+    "par1": 594,
+    "par2": 20
+   },
+   "cd4_trajectory": "<UNPORTABLE callable: HIVsim.__init__.<locals>.<lambda>>",
+   "cd4_reconstitution": "<UNPORTABLE callable: HIVsim.__init__.<locals>.<lambda>>",
+   "art_failure_prob": 0.1,
+   "dt_art": 5.0
+  },
+  "beta": 0.1,
+  "m_cross_layer": 0.35,
+  "m_partners": {
+   "m": {
+    "dist": "poisson1",
+    "par1": 0.01
+   },
+   "c": {
+    "dist": "poisson1",
+    "par1": 0.34
+   }
+  },
+  "f_cross_layer": 0.1,
+  "f_partners": {
+   "m": {
+    "dist": "poisson1",
+    "par1": 0.01
+   },
+   "c": {
+    "dist": "poisson1",
+    "par1": 0.26
+   }
+  },
+  "sev_dist": {
+   "dist": "normal_pos",
+   "par1": 1.33,
+   "par2": 0.2
+  }
+ }
+}

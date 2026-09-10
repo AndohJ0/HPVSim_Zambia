@@ -6,7 +6,10 @@ Helper functions for Zambia analysis
 import os
 import numpy as np
 import sciris as sc
+import starsim as ss
 import hpvsim as hpv
+
+from analyzers import CancerByAgeHIV
 import pylab as pl
 import pandas as pd
 import time
@@ -16,128 +19,265 @@ import gc
 
 """ 1. make_sim --> Standard simulation creation function """
 
-def _default_datafiles(location='zambia'):
-    """Return default (hiv_datafile, art_datafile) paths for the given location."""
-    dflocation = location.replace(' ', '_')
-    hiv_datafile = [f'data/{dflocation}_hiv_incidence_updated.csv',
-                    f'data/{dflocation}_female_hiv_mortality_updated.csv',
-                    f'data/{dflocation}_male_hiv_mortality_updated.csv']
-    art_datafile = [f'data/{dflocation}_art_coverage.csv']
-    return hiv_datafile, art_datafile
+LOCATION = 'zambia'
 
 
-def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, end=None, analyzers=None,
-             datafile=None, hiv_datafile=None, art_datafile=None, model_hiv=True):
+# --- v2.2.6 -> v2.3+ probability convention -------------------------------- #
+# v2.3.0 reinterpreted layer_probs and the cross-layer probs from per-timestep
+# to ANNUAL. Zambia's sexual-behaviour parameters were fitted under v2.2.6, so
+# they are per-timestep and must be annualized or the network comes out ~dt
+# times too sparse and the epidemic quietly dies. Note the exponent is 1/dt,
+# not dt: at dt=0.25, p=0.1 -> 0.344, not 0.026.
+def _to_annual_prob(p, dt):
+    """Convert a per-timestep probability (v2.2.x) to an annual one (v2.3+)."""
+    p = np.clip(p, 0, 1 - 1e-10)
+    return 1 - (1 - p) ** (1 / dt)
+
+
+def _layer_probs_to_annual(layer_probs, dt):
+    """Annualize the female (row 1) and male (row 2) rows of a layer_probs array."""
+    out = np.asarray(layer_probs, dtype=float).copy()
+    out[1:3, :] = _to_annual_prob(out[1:3, :], dt)
+    return out
+
+
+# --- Zambia sexual behaviour, fitted to the 2018 DHS ----------------------- #
+# For the fitting, see https://www.researchsquare.com/article/rs-3074559/v1
+# Debut: women 17.1/68.6/84.4/91.5/94.9% sexually active by age 15/18/20/22/25;
+# men 10.5/42.8/66.4/81.7/91.9%. See _behaviour_dists below.
+
+# Share of people of each age in marital / casual partnerships. Rows are
+# [age-bin lower bounds], [female], [male]. Per-timestep; annualized in make_sim.
+_LAYER_PROBS_MARITAL = np.array([
+    [0, 5,    10,      15,      20,     25,     30,     35,     40,     45,   50,   55,   60,   65,    70,    75],
+    [0, 0, 0.009,  0.1314,  0.4734,  0.621,  0.675,  0.693, 0.6516, 0.6174, 0.45, 0.27, 0.18, 0.09, 0.045, 0.009],
+    [0, 0,  0.01,   0.146,   0.526,   0.69,   0.75,   0.77,  0.724,  0.686,  0.5,  0.3,  0.2,  0.1,  0.05,  0.01]])
+_LAYER_PROBS_CASUAL = np.array([
+    [0, 5,  10,  15,  20,  25,  30,  35,  40,  45,  50,  55,   60,   65,   70,   75],
+    [0, 0, 0.1, 0.3, 0.3, 0.3, 0.3, 0.5, 0.6, 0.5, 0.4, 0.1, 0.01, 0.01, 0.01, 0.01],
+    [0, 0, 0.2, 0.4, 0.4, 0.4, 0.4, 0.6, 0.8, 0.6, 0.2, 0.1, 0.05, 0.02, 0.02, 0.02]])
+
+# v2's poisson1 added 1 to the draw; v3's SexualNetwork does that itself, so
+# these are the bare Poisson rates.
+_PARTNER_RATES = dict(m_marital=0.01, m_casual=0.2, f_marital=0.01, f_casual=0.2)
+
+# Sexual debut, fitted to the 2018 DHS (mean, std in years).
+_DEBUT = dict(f=(16.69, 1.78), m=(18.65, 3.06))
+
+
+def _behaviour_dists():
+    """Fresh distribution objects for the network parameters.
+
+    Built per call, never shared: an ss.Dist carries RNG state, so reusing one
+    instance across two sims raises DistSeedRepeatError under common random
+    numbers.
     """
-    Define parameters, analyzers, and interventions for the simulation
+    pars = {f'{sex}_partners_{layer}': ss.poisson(lam=rate)
+            for (key, rate) in _PARTNER_RATES.items()
+            for sex, layer in [key.split('_')]}
+    for sex, (mean, std) in _DEBUT.items():
+        pars[f'debut_{sex}'] = ss.lognorm_ex(mean=mean, std=std)
+    return pars
+
+
+def _hiv_data(location=LOCATION):
+    """Zambia HIV/ART inputs in the dict form hpv.Sim(hiv_data=) expects.
+
+    v3 replaced v2's separate hiv_datafile/art_datafile lists with a single
+    hiv_data=, either a folder of four fixed filenames or this dict. Zambia's
+    files carry a `zambia_` prefix and there is no hiv_prevalence.csv, so the
+    dict route is used; 'init_prev' is optional and omitted, leaving the HIV
+    module to seed from the incidence curve alone.
+
+    The two *_hiv_mortality_updated.csv files are deliberately unused: v3
+    delegates HIV mortality to stisim, which models it endogenously from CD4
+    progression rather than taking an imposed rate.
     """
-    if end is None:
-        end = 2100
-    if calib:
-        end = 2020
+    loc = location.replace(' ', '_')
+
+    inc = pd.read_csv(f'data/{loc}_hiv_incidence_updated.csv').rename(
+        columns={'Age': 'age', 'Year': 'year', 'Sex': 'sex', 'Incidence': 'incidence'})
+    inc['sex'] = inc['sex'].astype(str).str.lower().str[0]
+    inc = inc.astype({'age': int, 'year': int, 'incidence': float})
+
+    # encoding: the by-age ART files begin with a BOM, which would otherwise
+    # leave the first column named '﻿age'. dropna: they also carry ~500
+    # trailing blank rows from the Excel export.
+    frames = []
+    for sex, fname in (('f', 'females'), ('m', 'males')):
+        wide = pd.read_csv(f'data/{loc}_art_coverage_by_age_{fname}.csv',
+                           encoding='utf-8-sig').dropna(subset=['age'])
+        long = wide.melt(id_vars='age', var_name='year', value_name='coverage')
+        long['sex'] = sex
+        frames.append(long.astype({'age': int, 'year': int, 'coverage': float}))
+    art = pd.concat(frames, ignore_index=True)
+
+    return dict(incidence=inc[['age', 'sex', 'year', 'incidence']],
+                art_coverage=art[['age', 'sex', 'year', 'coverage']])
+
+
+def hiv_counts(sim, lo=None, hi=None):
+    """Scale-correct HIV headcount and prevalence, optionally for an age band.
+
+    As of hpvsim 3.2 the all-age HIV results (``n_infected``, ``prevalence``,
+    ``prevalence_15_49``, ``p_on_art``, the flows) are scale-weighted by
+    ``hpv.HIV.update_results``, so read those directly. This helper remains
+    useful for an ARBITRARY age band, because stisim's own sex-by-age strata
+    (``n_infected_f_15_20`` and friends) are still raw agent counts and
+    over-report at ``ms_agent_ratio > 1``.
+
+    Returns (n_hiv, prevalence) in real-population units.
+    """
+    ppl = sim.people
+    alive = ppl.alive.values
+    w = ppl.scale.values
+    if lo is not None or hi is not None:
+        age = ppl.age.values
+        alive = alive & (age >= (lo if lo is not None else -np.inf)) \
+                      & (age < (hi if hi is not None else np.inf))
+    infected = sim.diseases.hiv.infected.values
+    denom = float((w * alive).sum())
+    n_hiv = float((w * (alive & infected)).sum())
+    scale = sim.pars.pop_scale
+    return n_hiv * scale, (n_hiv / denom if denom else 0.0)
+
+
+def make_sim(calib=False, calib_pars=None, debug=0, interventions=None, seed=1, stop=None,
+             analyzers=None, datafile=None, hiv_data=None, model_hiv=True, end=None):
+    """Define parameters, analyzers, and interventions for the simulation.
+
+    calib_pars is expected in v3 form (see hpv.route_pars): nested by scope,
+    e.g. dict(beta=0.1, hiv=dict(rel_reactivation_lo=3.0),
+    hpv16=dict(cin_fn=dict(k=0.35)), cross_immunity=dict(rel_sev=...)).
+    Parameters recovered from a v2 calibration must be passed through
+    v2_calib_pars_to_v3() first -- make_sim does not convert silently, since
+    doing so would double-convert genuinely-v3 parameters.
+    """
+    if end is not None:  # v2 name; v3 uses stop=
+        stop = end
+    if stop is None:
+        # Calibration default runs one year past the latest target (2021 IRR by
+        # age), so the sim window contains the full reporting year at dt=0.25.
+        stop = 2022 if calib else 2100
+
+    dt = [0.25, 1.0][debug]
 
     pars = sc.objdict(
-        n_agents=[10e3, 1e3][debug],
-        dt=[0.25, 1.0][debug],
-        start=[1960, 1980][debug],
-        end=end,
         beta=0.16,
-        genotypes=[16, 18, 'hi5', 'ohr'],
-        location='zambia',
-        init_hpv_dist=dict(hpv16=0.4, hpv18=0.25, hi5=0.25, ohr=.1),
-        init_hpv_prev={
-            'age_brackets': np.array([12, 17, 24, 34, 44, 64, 80, 150]),
-            'm': np.array([0.0, 0.25, 0.6, 0.25, 0.05, 0.01, 0.0005, 0]),
-            'f': np.array([0.0, 0.35, 0.7, 0.25, 0.05, 0.01, 0.0005, 0]),
-        },
+        # Zambia's v2 init_hpv_prev is byte-identical to v3's built-in default
+        # age/sex curve (hpvsim/seeding.py), so it is simply dropped.
         ms_agent_ratio=100,  # Downsampling ratio between modeled and real-world agent counts
         verbose=0.0,
-        rand_seed=seed,
-        model_hiv=model_hiv,
-        hiv_pars={},
+        # Sexual behaviour, annualized from the v2.2.6 per-timestep convention.
+        layer_probs_marital=_layer_probs_to_annual(_LAYER_PROBS_MARITAL, dt),
+        layer_probs_casual=_layer_probs_to_annual(_LAYER_PROBS_CASUAL, dt),
+        **_behaviour_dists(),
     )
 
-    # Latency parameters (not modelling HPVlatency)
-    # pars.hpv_control_prob = 0.0  # Probability that HPV is controlled latently vs. cleared
-    # pars.hpv_reactivation = 0.025  # Probability of a latent infection reactivating
+    # Latency: off by default (hpv_control_prob=0 makes it a no-op).
+    pars.hpv_control_prob = 0.0
+    pars.hpv_reactivation = 0.025
 
-    # Sexual behavior parameters
-    # Debut: derived by fitting to 2018 DHS
-    # Women:
-    #           Age:   15,   18,   20,   22,   25
-    #   Prop_active: 17.1, 68.6, 84.4, 91.5, 94.9
-    # Men:
-    #           Age:   15,   18,   20,   22,   25
-    #   Prop_active: 10.5, 42.8, 66.4, 81.7, 91.9
-    # For fitting, see https://www.researchsquare.com/article/rs-3074559/v1
-    pars.debut = dict(
-        f=dict(dist='lognormal', par1=16.69, par2=1.78),
-        m=dict(dist='lognormal', par1=18.65, par2=3.06),
-    )
+    # v2 carried art_failure_prob=0.1 as an hpvsim par; v3 delegates ART
+    # suppression to stisim, where p_effective_art is its complement.
+    hiv_pars = dict(p_effective_art=ss.bernoulli(p=0.9)) if model_hiv else None
 
-    # Participation in marital and casual relationships
-    # Derived to fit 2018 DHS data
-    # For fitting, see https://www.researchsquare.com/article/rs-3074559/v1
-    pars.layer_probs = dict(
-        m=np.array([
-            # Share of people of each age who are married
-            [0, 5,    10,       15,      20,     25,      30,     35,      40,     45,    50,   55,   60,   65,    70,    75],
-            [0, 0, 0.009,   0.1314,  0.4734,  0.621,   0.675,  0.693,  0.6516, 0.6174,  0.45, 0.27, 0.18, 0.09, 0.045, 0.009],  # Females
-            [0, 0,  0.01,    0.146,   0.526,   0.69,    0.75,   0.77,   0.724,  0.686,   0.5,  0.3,  0.2,  0.1,  0.05,  0.01]]  # Males
-        ),
-        c=np.array([
-            # Share of people of each age in casual partnerships
-            [0, 5,  10,  15,  20,  25,  30,  35,  40,   45,   50,   55,   60,   65,   70,   75],
-            [0, 0, 0.1, 0.3, 0.3, 0.3, 0.3, 0.5, 0.6,  0.5,  0.4,  0.1, 0.01, 0.01, 0.01, 0.01],
-            [0, 0, 0.2, 0.4, 0.4, 0.4, 0.4, 0.6, 0.8,  0.6,  0.2,  0.1, 0.05, 0.02, 0.02, 0.02]]
-        ),
-    )
-
-    pars.m_partners = dict(
-        m=dict(dist='poisson1', par1=0.01),
-        c=dict(dist='poisson1', par1=0.2),
-    )
-    pars.f_partners = dict(
-        m=dict(dist='poisson1', par1=0.01),
-        c=dict(dist='poisson1', par1=0.2),
-    )
-
-    # HIV parameters
-    pars.hiv_pars['art_failure_prob'] = 0.1  # Probability ART fails to suppress viral load
-
-    # If calibration parameters have been supplied, use them here
     if calib_pars is not None:
+        # HIV-scoped pars in a no-HIV sim are skipped by hpv.route_pars with a
+        # warning (hpvsim >= 3.2), so one calibrated parameter set drives every
+        # scenario without per-scenario filtering here.
         pars = sc.mergedicts(pars, calib_pars)
 
-    # Create the sim
-    sim = hpv.Sim(
-        pars=pars, interventions=interventions, rand_seed=seed, analyzers=analyzers,
-        datafile=datafile, hiv_datafile=hiv_datafile, art_datafile=art_datafile
+    if model_hiv and hiv_data is None:
+        hiv_data = _hiv_data()
+
+    return hpv.Sim(
+        pars=pars,
+        location=LOCATION,
+        genotypes=[16, 18, 'hi5', 'ohr'],
+        init_hpv_dist=dict(hpv16=0.4, hpv18=0.25, hi5=0.25, ohr=0.1),
+        n_agents=[10e3, 1e3][debug],
+        start=[1960, 1980][debug],
+        stop=stop,
+        dt=dt,
+        rand_seed=seed,
+        interventions=interventions,
+        analyzers=analyzers,
+        data=datafile,
+        model_hiv=model_hiv or None,
+        hiv_data=hiv_data if model_hiv else None,
+        hiv_pars=hiv_pars,
     )
 
-    return sim
+
+def v2_calib_pars_to_v3(v2_pars, dt=0.25):
+    """Translate a v2.2.6 Zambia parameter dict into v3 form.
+
+    Call this explicitly on anything recovered from the old .obj files (see
+    results/v2_artefact_snapshot.json); make_sim does not do it implicitly.
+
+    Call it once PER SIM, not once for a batch: the returned dict contains live
+    ss.Dist objects (partner counts, rel_sev), and an ss.Dist carries RNG state,
+    so reusing one result across two sims fails -- see _behaviour_dists.
+    Renames to the v3 scoped/suffixed names, converts the cross-layer
+    probabilities from per-timestep to annual, and drops v2 parameters that
+    v3 has no equivalent for.
+    """
+    out = {}
+    if 'beta' in v2_pars:
+        out['beta'] = v2_pars['beta']
+    for key in ('m_cross_layer', 'f_cross_layer'):
+        if key in v2_pars:
+            out[key] = float(_to_annual_prob(v2_pars[key], dt))
+    for sex in 'mf':
+        block = v2_pars.get(f'{sex}_partners')
+        if block:
+            for v2_layer, v3_layer in (('m', 'marital'), ('c', 'casual')):
+                if v2_layer in block:
+                    out[f'{sex}_partners_{v3_layer}'] = ss.poisson(lam=block[v2_layer]['par1'])
+    # v2 sev_dist (individual biological severity) is v3's CrossImmunity.rel_sev.
+    sev = v2_pars.get('sev_dist')
+    if sev:
+        out['cross_immunity'] = dict(rel_sev=ss.normal(loc=sev['par1'], scale=sev['par2']))
+    if 'own_imm_hr' in v2_pars:
+        out.setdefault('cross_immunity', {})['own_imm_hr'] = v2_pars['own_imm_hr']
+    # v2 nested CD4 strata (lt200/gt200) became flat _lo/_hi on the HIV module.
+    hiv2 = v2_pars.get('hiv_pars') or {}
+    hiv3 = {}
+    for effect in ('rel_sus', 'rel_sev', 'rel_imm'):
+        if effect in hiv2:
+            hiv3[f'{effect}_lo'] = hiv2[effect]['lt200']
+            hiv3[f'{effect}_hi'] = hiv2[effect]['gt200']
+    if 'rel_reactivation_prob' in hiv2:  # v3 split this by CD4 stratum
+        hiv3['rel_reactivation_lo'] = hiv2['rel_reactivation_prob']
+        hiv3['rel_reactivation_hi'] = hiv2['rel_reactivation_prob']
+    if 'art_failure_prob' in hiv2:
+        hiv3['p_effective_art'] = ss.bernoulli(p=1 - hiv2['art_failure_prob'])
+    if hiv3:
+        out['hiv'] = hiv3
+    for gt, gpars in (v2_pars.get('genotype_pars') or {}).items():
+        keep = {k: v for k, v in gpars.items() if k in ('cin_fn', 'cancer_fn')}
+        if keep:
+            out[gt] = {k: {kk: vv for kk, vv in v.items() if kk == 'k'}
+                       for k, v in keep.items()}
+    return out
 
 """ 2. run_sim --> Simulation running function """
 
 def run_sim(
         analyzers=None, interventions=None, debug=0, seed=1, verbose=0.5,
-        do_save=False, end=2020, calib_pars=None, hiv_datafile=None, art_datafile=None,
+        do_save=False, end=2020, calib_pars=None, hiv_data=None,
         location='zambia', model_hiv=True):
 
-    # Make arguments
-    default_hiv, default_art = _default_datafiles(location)
-    if hiv_datafile is None:
-        hiv_datafile = default_hiv
-    if art_datafile is None:
-        art_datafile = default_art
+    if hiv_data is None:
+        hiv_data = _hiv_data()
 
     # Make sim
     sim = make_sim(
         debug=debug,
         seed=seed,
         end=end,
-        hiv_datafile=hiv_datafile,
-        art_datafile=art_datafile,
+        hiv_data=hiv_data,
         analyzers=analyzers,
         interventions=interventions,
         calib_pars=calib_pars,
@@ -158,18 +298,23 @@ def run_sim(
 
 """ 3. get_top_calibrated_pars --> Function to get the top calibrated parameter sets from the calibration results """
 def get_top_calibrated_pars(calib, n=None):
-    """Return the top-n calibrated parameter sets with metadata."""
-    total = len(calib.df)
-    available = total if n is None else int(min(n, total))
+    """Return the top-n calibrated parameter sets with metadata.
+
+    v3 removed Calibration.trial_pars_to_sim_pars. The parameter set for a
+    trial is recovered from calib.df directly: every column other than the
+    bookkeeping ones is a dotted parameter key, which route_pars re-expands
+    into nested form when the sim is built.
+    """
+    df = calib.df.nsmallest(len(calib.df) if n is None else int(n), 'mismatch')
+    bookkeeping = {'index', 'mismatch', 'rand_seed'}
+    par_cols = [c for c in df.columns if c not in bookkeeping]
     top_pars = []
-    for i in range(available):
-        trial_row = calib.df.iloc[i]
-        pars = calib.trial_pars_to_sim_pars(which_pars=i)
+    for rank, (_, row) in enumerate(df.iterrows(), start=1):
         top_pars.append(dict(
-            pars=pars,
-            trial_index=int(trial_row['index']),
-            mismatch=float(trial_row['mismatch']),
-            rank=i + 1,
+            pars={c: row[c] for c in par_cols},
+            trial_index=int(row['index']),
+            mismatch=float(row['mismatch']),
+            rank=rank,
         ))
     return top_pars
 
@@ -178,211 +323,148 @@ def get_top_calibrated_pars(calib, n=None):
 
 def run_multi_sim(
         analyzers=None, interventions=None, debug=0, seed=1, verbose=0.5,
-        do_save=False, end=2020, calib_pars=None, hiv_datafile=None, art_datafile=None,
-        n_runs=10, batch_size=None, top_pars=None, create_reduced=True, model_hiv=True):
-    """Run multiple simulations with analyzers using optimized batch processing across top calibrated parameter sets.
-    
-    Optimized for large numbers of parameter sets (e.g., 100 parameter sets with 10 runs each).
+        do_save=False, end=2020, calib_pars=None, hiv_data=None,
+        n_runs=10, batch_size=None, top_pars=None, create_reduced=True,
+        art_coverage_scale=1.0, model_hiv=True, n_cpus=None):
+    """Run multiple simulations across one or more calibrated parameter sets.
+
+    Handles both the single-par-set case (calib_pars=<dict>, top_pars=None) and
+    the top-N-par-sets case (top_pars=[{'pars': ..., 'rank': ...}, ...]).
+    Batches runs to cap memory; returns (all_sims, all_reduced).
+
+    Each batch runs as one ss.MultiSim across the (par_set, seed) combinations
+    in that batch, dispatched to n_cpus workers (default: all available).
+
+    art_coverage_scale multiplies the ART coverage curve in-memory (1.0 = as-is,
+    0.0 = counterfactual-without-ART); the base sim is otherwise unchanged.
     """
-    
+
     # Normalize top_pars input
     if top_pars is None:
         top_pars = [{'pars': calib_pars, 'rank': None}]
     elif isinstance(top_pars, dict):
         top_pars = [top_pars]
-    
-    # Optimize batch_size: use smaller batches for many parameter sets to save memory
-    if batch_size is None:
-        if len(top_pars) > 50:
-            batch_size = min(10, n_runs)  # Smaller batches for many parameter sets
-        else:
-            batch_size = min(25, n_runs)  # Standard batch size
-    
-    # Make arguments
-    default_hiv, default_art = _default_datafiles()
-    if hiv_datafile is None:
-        hiv_datafile = default_hiv
-    if art_datafile is None:
-        art_datafile = default_art
+
+    if hiv_data is None:
+        hiv_data = _hiv_data()
+    hiv_data = _scale_art_coverage(hiv_data, art_coverage_scale)
 
     total_runs = n_runs * len(top_pars)
-    print(f'Running {total_runs} simulations ({n_runs} per parameter set, {len(top_pars)} parameter sets)')
-    print(f'Using batch size: {batch_size}')
-    
-    # Reduce verbose output for individual sims when running many parameter sets
+    # A batch is one parallel MultiSim(sims=list); default fills the box so a
+    # small run finishes in a single batch. The old default -- min(25, n_runs)
+    # inside a per-par-set loop -- capped concurrency at n_runs regardless of
+    # core count, so 10x10 saturated only 10 workers on a 160-core VM. Override
+    # explicitly if memory is tight (each in-memory sim carries all its people).
+    if batch_size is None:
+        batch_size = min(total_runs, os.cpu_count() or 32)
+
     sim_verbose = 0.0 if len(top_pars) > 20 else verbose
-    
-    start_time = time.time()
-    
+    print(f'Running {total_runs} sims ({len(top_pars)} par sets x {n_runs} seeds); '
+          f'batch size {batch_size}; n_cpus={n_cpus if n_cpus is not None else "auto"}')
+
+    # (par_idx, seed_i) tasks -- one sim per pair, dispatched together so par
+    # sets and seeds run concurrently under one MultiSim.
+    tasks = [(par_idx, seed_i)
+             for par_idx in range(len(top_pars))
+             for seed_i in range(n_runs)]
+
     all_sims = []
-    all_reduced = []
-    total_completed = 0
-    last_progress_print = 0
-    progress_interval = max(1, total_runs // 50)  # Update progress every ~2% or at least every simulation
-    
-    for idx, cfg in enumerate(top_pars):
-        cfg_pars = cfg.get('pars', calib_pars)
-        cfg_rank = cfg.get('rank', idx + 1)
-        cfg_label = cfg.get('label', f'top_{cfg_rank:02d}')
-        cfg_mismatch = cfg.get('mismatch', None)
-        
-        # Show parameter set info only for small runs or every 10 sets for large runs
-        if len(top_pars) <= 20:
-            print(f'\n=== Parameter set {idx + 1}/{len(top_pars)}: {cfg_label} (rank {cfg_rank}) ===')
-            if cfg_mismatch is not None:
-                print(f'Mismatch: {cfg_mismatch:.6f}')
-        elif (idx + 1) % 10 == 0 or idx == 0:
-            print(f'\n=== Parameter set {idx + 1}/{len(top_pars)}: {cfg_label} (rank {cfg_rank}) ===')
-        
-        batch_num = 0
-        for batch_start in range(0, n_runs, batch_size):
-            batch_num += 1
-            batch_end = min(batch_start + batch_size, n_runs)
-            batch_runs = batch_end - batch_start
-            
-            # Only show batch details for small runs
-            if len(top_pars) <= 20:
-                print(f'  Batch {batch_num}: runs {batch_start+1}-{batch_end} ({batch_runs} simulations)')
-            
-            # Create fresh base sim for each batch to avoid memory accumulation
-            base_sim = make_sim(
+    start_time = time.time()
+
+    for batch_start in range(0, len(tasks), batch_size):
+        batch_tasks = tasks[batch_start:batch_start + batch_size]
+        batch_sims = []
+        for par_idx, seed_i in batch_tasks:
+            cfg = top_pars[par_idx]
+            s = make_sim(
                 debug=debug,
-                seed=seed + idx * 10000 + batch_start,  # Use different seeds for each parameter set and batch
+                seed=seed + par_idx * 10000 + seed_i,
                 end=end,
-                hiv_datafile=hiv_datafile,
-                art_datafile=art_datafile,
+                hiv_data=hiv_data,
                 analyzers=analyzers,
                 interventions=interventions,
-                calib_pars=cfg_pars,
-                model_hiv=model_hiv
+                calib_pars=cfg.get('pars', calib_pars),
+                model_hiv=model_hiv,
             )
-            base_sim['verbose'] = sim_verbose  # Use reduced verbosity for individual sims
-            
-            # Create and run MultiSim for this batch
-            msim = hpv.MultiSim(base_sim)
-            msim.run(n_runs=batch_runs)
-            
-            # Store results from this batch and add metadata
-            for sim in msim.sims:
-                sim.rank = cfg_rank
-                sim.top_label = cfg_label
-                if cfg_mismatch is not None:
-                    sim.mismatch = cfg_mismatch
-                all_sims.append(sim)
-            
-            total_completed += batch_runs
-            
-            # Print total progress regularly
-            if total_completed - last_progress_print >= progress_interval or total_completed == total_runs:
-                elapsed = time.time() - start_time
-                percent = (total_completed / total_runs) * 100
-                rate = total_completed / elapsed if elapsed > 0 else 0
-                remaining = (total_runs - total_completed) / rate if rate > 0 else 0
-                print(f'  Total progress: {total_completed}/{total_runs} simulations ({percent:.1f}%) | '
-                      f'Elapsed: {elapsed/60:.1f} min | Remaining: ~{remaining/60:.1f} min | '
-                      f'Rate: {rate:.2f} sims/min')
-                last_progress_print = total_completed
-            
-            # Force garbage collection to free memory
-            del msim, base_sim
-            gc.collect()
-            
-            if len(top_pars) <= 20:
-                print(f'  Completed batch {batch_num} ({batch_runs} simulations)')
-        
-        # Create a reduced median sim per parameter set (optional, can be expensive for many sets)
-        if create_reduced:
+            s['verbose'] = sim_verbose
+            # `or par_idx + 1`, not a dict default: the no-top_pars path sets
+            # 'rank': None explicitly, so .get()'s default never fires.
+            s.rank = cfg.get('rank') or par_idx + 1
+            s.top_label = cfg.get('label') or f'top_{s.rank:02d}'
+            if cfg.get('mismatch') is not None:
+                s.mismatch = cfg['mismatch']
+            batch_sims.append(s)
+
+        msim = ss.MultiSim(sims=batch_sims)
+        msim.run(n_cpus=n_cpus)
+        all_sims.extend(msim.sims)
+
+        del msim, batch_sims
+        gc.collect()
+
+        elapsed = time.time() - start_time
+        done = len(all_sims)
+        rate = done / elapsed if elapsed > 0 else 0
+        remaining = (total_runs - done) / rate if rate > 0 else 0
+        pct = done / total_runs * 100
+        print(f'  Progress: {done}/{total_runs} ({pct:.0f}%) | '
+              f'Elapsed: {elapsed/60:.1f} min | Remaining: ~{remaining/60:.1f} min')
+
+    elapsed_total = time.time() - start_time
+    print(f'\nCompleted {total_runs} sims in {elapsed_total/60:.1f} min '
+          f'({elapsed_total:.1f}s); avg {elapsed_total/total_runs:.2f}s per sim')
+
+    # Optional: reduced median sim per parameter set. Preserved from the old
+    # per-par-set path -- ss.MultiSim.median() writes onto base_sim, so a fresh
+    # template sim is built per rank before .sims is overridden with the subset.
+    all_reduced = []
+    if create_reduced:
+        by_rank = {}
+        for s in all_sims:
+            by_rank.setdefault(getattr(s, 'rank', None), []).append(s)
+        rank_to_cfg = {(cfg.get('rank') or idx + 1): cfg
+                       for idx, cfg in enumerate(top_pars)}
+        for cfg_rank, subset in by_rank.items():
+            if not subset:
+                continue
+            cfg = rank_to_cfg.get(cfg_rank, {})
             try:
                 final_base = make_sim(
-                    debug=debug,
-                    seed=seed + idx * 10000,
-                    end=end,
-                    hiv_datafile=hiv_datafile,
-                    art_datafile=art_datafile,
-                    analyzers=analyzers,
-                    interventions=interventions,
-                    calib_pars=cfg_pars,
-                    model_hiv=model_hiv
+                    debug=debug, seed=seed, end=end, hiv_data=hiv_data,
+                    analyzers=analyzers, interventions=interventions,
+                    calib_pars=cfg.get('pars', calib_pars),
+                    model_hiv=model_hiv,
                 )
-                final_msim = hpv.MultiSim(final_base)
-                subset = [s for s in all_sims if getattr(s, 'rank', None) == cfg_rank]
+                final_msim = ss.MultiSim(final_base)
                 final_msim.sims = subset
                 final_msim.median()
                 reduced_sim = final_msim.base_sim
                 reduced_sim.rank = cfg_rank
-                reduced_sim.top_label = cfg_label
-                if cfg_mismatch is not None:
-                    reduced_sim.mismatch = cfg_mismatch
+                reduced_sim.top_label = subset[0].top_label
+                if hasattr(subset[0], 'mismatch'):
+                    reduced_sim.mismatch = subset[0].mismatch
                 all_reduced.append((final_msim, reduced_sim))
             except Exception as e:
-                if len(top_pars) <= 20:
-                    print(f'  Warning: Could not create reduced sim for rank {cfg_rank}: {e}')
-    
-    end_time = time.time()
-    elapsed_total = end_time - start_time
-    print(f'\nCompleted all {total_runs} simulations in {elapsed_total/60:.1f} minutes ({elapsed_total:.2f} seconds)')
-    print(f'Average: {elapsed_total/total_runs:.2f} seconds per simulation')
-    
+                print(f'  Warning: Could not create reduced sim for rank {cfg_rank}: {e}')
+
     return all_sims, all_reduced
 
 
-def _scale_art_datafiles(art_datafile, scale):
-    """Return list of art coverage files scaled by `scale` (writes new CSVs if needed)."""
-    if scale == 1.0 or not art_datafile:
-        return art_datafile
+def _scale_art_coverage(hiv_data, scale):
+    """Return hiv_data with ART coverage multiplied by `scale`, clipped to [0, 1].
 
-    art_files = art_datafile if isinstance(art_datafile, (list, tuple)) else [art_datafile]
-    scaled_files = []
-    for path in art_files:
-        try:
-            df = pd.read_csv(path)
-            numeric_cols = [
-                col for col in df.columns
-                if df[col].dtype.kind in 'fi' and ('ART' in col.upper() or 'COVERAGE' in col.upper())
-            ]
-            if numeric_cols:
-                df[numeric_cols] = df[numeric_cols] * scale
-            suffix = f'_scaled_{scale}'.replace('.', 'p')
-            out_path = path.replace('.csv', f'{suffix}.csv')
-            df.to_csv(out_path, index=False)
-            scaled_files.append(out_path)
-        except Exception as e:
-            print(f'Warning: could not scale ART datafile {path} ({e}); using unscaled file.')
-            scaled_files.append(path)
-    return scaled_files
+    Used for the counterfactual-without-ART scenario (scale=0). v2 did this by
+    writing scaled copies of the CSVs next to the originals; scaling the
+    in-memory frame avoids littering data/ with derived files.
+    """
+    if scale == 1.0:
+        return hiv_data
+    out = dict(hiv_data)
+    art = out['art_coverage'].copy()
+    art['coverage'] = (art['coverage'] * scale).clip(0.0, 1.0)
+    out['art_coverage'] = art
+    return out
 
-
-def run_multi_sim_optimized_art(
-        analyzers=None, interventions=None, debug=0, seed=1, verbose=0.5,
-        do_save=False, end=2020, calib_pars=None, hiv_datafile=None, art_datafile=None,
-        n_runs=10, batch_size=None, top_pars=None, create_reduced=True,
-        art_coverage_scale=1.0, model_hiv=True):
-    """Wrapper around run_multi_sim with optional ART coverage scaling and HIV toggling."""
-    default_hiv, default_art = _default_datafiles()
-    if hiv_datafile is None:
-        hiv_datafile = default_hiv
-    if art_datafile is None:
-        art_datafile = default_art
-
-    scaled_art_files = _scale_art_datafiles(art_datafile, art_coverage_scale)
-
-    return run_multi_sim(
-        analyzers=analyzers,
-        interventions=interventions,
-        debug=debug,
-        seed=seed,
-        verbose=verbose,
-        do_save=do_save,
-        end=end,
-        calib_pars=calib_pars,
-        hiv_datafile=hiv_datafile,
-        art_datafile=scaled_art_files,
-        n_runs=n_runs,
-        batch_size=batch_size,
-        top_pars=top_pars,
-        create_reduced=create_reduced,
-        model_hiv=model_hiv,
-    )
 
 """ 4. q25_func and q75_func --> Functions to calculate 25th and 75th percentiles """
 def q25_func(data):
@@ -395,25 +477,45 @@ def q75_func(data):
     return np.percentile(data, 75, axis=0)
 
 
+# v3 result names. The HIV-stratified keys and the age-standardized rate all
+# live on the all_hpv analyzer (sim.results.all_hpv), not on sim.results
+# directly as in v2; the HIV-stratified ones only exist when HIV is modelled.
 DEFAULT_EXPORT_METRICS = [
-    'cancers', 'cancers_with_hiv', 'cancers_no_hiv',
-    'cancer_incidence', 'cancer_incidence_with_hiv', 'cancer_incidence_no_hiv'
+    'new_cancers', 'cancers_with_hiv', 'cancers_no_hiv',
+    'asr_cancer_incidence', 'cancer_incidence_with_hiv', 'cancer_incidence_no_hiv',
+    'cancer_rate_ratio',
 ]
+
+
+def _years(sim):
+    """Float calendar years for a sim's result timeseries."""
+    return np.asarray(sim.results.timevec.years, dtype=float)
+
+
+def _result_series(sim, metric):
+    """Return a sim's timeseries for `metric`, or None if it isn't present.
+
+    v2 exposed every result flat on sim.results; v3 splits them across module
+    result sets, with the pooled HPV and HIV-stratified cancer outputs on the
+    all_hpv analyzer.
+    """
+    for holder in (sim.results.get('all_hpv'), sim.results):
+        if holder is not None and metric in holder:
+            return np.asarray(holder[metric], dtype=float)
+    return None
 
 """ 5. aggregate_metric_series --> Function to aggregate metric series across simulations """
 def aggregate_metric_series(sims, metric, label_fmt='run_{rank:02d}'):
     """Return a DataFrame aggregating a single metric across sims."""
-    metric_key = metric
-    years = np.asarray(sims[0].results['year'])
-    columns = {'year': years}
+    columns = {'year': _years(sims[0])}
 
     collected = []
     for i, sim in enumerate(sims):
-        if metric_key not in sim.results:
+        series = _result_series(sim, metric)
+        if series is None:
             continue
         rank = getattr(sim, 'rank', None)
         label = label_fmt.format(rank=rank if rank is not None else i)
-        series = np.asarray(sim.results[metric_key])
         columns[label] = series
         collected.append(series)
 
@@ -470,7 +572,7 @@ def export_raw_sim_series(sims, location, metrics=None, save_csv=True, save_xlsx
 
     rows = []
     for sim_idx, sim in enumerate(sims, start=1):
-        years = np.asarray(sim.results['year'])
+        years = _years(sim)
         sim_meta = dict(
             sim_index=sim_idx,
             rank=getattr(sim, 'rank', None),
@@ -478,9 +580,9 @@ def export_raw_sim_series(sims, location, metrics=None, save_csv=True, save_xlsx
             mismatch=getattr(sim, 'mismatch', None),
         )
         for metric in metrics:
-            if metric not in sim.results:
+            values = _result_series(sim, metric)
+            if values is None:
                 continue
-            values = np.asarray(sim.results[metric])
             for year, value in zip(years, values):
                 rows.append({
                     **sim_meta,
@@ -510,172 +612,50 @@ def export_raw_sim_series(sims, location, metrics=None, save_csv=True, save_xlsx
 
 """ 7. create_age_analyzer and aggregate_analyzer_results --> Functions for analyzer creation and aggregation """
 
-def create_age_analyzer():
-    """Create age-stratified analyzer for cancer and HIV results."""
-    edges = np.array([0.,5.,10.,15.,20.,25.,30.,35.,40.,45.,50.,55.,60.,65.,70.,75.,80.,100.])
-    return hpv.age_results(
-        result_args=sc.objdict(
-            cancers_no_hiv=sc.objdict(years=2020, edges=edges),
-            cancers_with_hiv=sc.objdict(years=2020, edges=edges),
-            cancers=sc.objdict(years=2020, edges=edges),
-            cancer_incidence_no_hiv=sc.objdict(years=2020, edges=edges),
-            cancer_incidence_with_hiv=sc.objdict(years=2020, edges=edges),
-            cancer_incidence=sc.objdict(years=2020, edges=edges),
-            cancer_hiv_rate_ratios=sc.objdict(years=2020, edges=edges),
-        )
-    )
+def create_age_analyzer(year=2020):
+    """Create the age-stratified, HIV-stratified cancer analyzer."""
+    return CancerByAgeHIV(years=year)
 
-def aggregate_analyzer_results(sims):
+
+def aggregate_analyzer_results(sims, year=2020):
     """Aggregate analyzer results across simulations into DataFrames with statistics."""
-    print("Aggregating analyzer results across all simulations...")
-    
-    all_analyzer_dfs = []
-    
+    print('Aggregating analyzer results across all simulations...')
+
+    metrics = ['cancers', 'cancers_with_hiv', 'cancers_no_hiv',
+               'cancer_incidence_with_hiv', 'cancer_incidence_no_hiv',
+               'cancer_rate_ratio']
+    frames = []
     for i, sim in enumerate(sims):
         if i % 10 == 0:
-            print(f"Processing simulation {i+1}/{len(sims)}")
-        
-        try:
-            analyzer = sim.get_analyzer()
-        except (ValueError, AttributeError):
-            print(f"Warning: No analyzer found for simulation {i+1}, skipping...")
+            print(f'Processing simulation {i + 1}/{len(sims)}')
+        analyzer = next((a for a in sim.analyzers.values()
+                         if isinstance(a, CancerByAgeHIV)), None)
+        if analyzer is None:
+            print(f'Warning: no CancerByAgeHIV analyzer for simulation {i + 1}, skipping...')
             continue
-        
-        if analyzer is not None:
-            year_key = np.int64(2020)
-            # Get rank and mismatch if available
-            rank = getattr(sim, 'rank', None)
-            mismatch = getattr(sim, 'mismatch', None)
-            df = pd.DataFrame({
-                'bins': analyzer.results['cancers']['bins'],
-                'cancers': analyzer.results['cancers'][year_key],
-                'cancers_with_hiv': analyzer.results['cancers_with_hiv'][year_key],
-                'cancers_no_hiv': analyzer.results['cancers_no_hiv'][year_key],
-                'cancer_incidence': analyzer.results['cancer_incidence'][year_key],
-                'cancer_incidence_with_hiv': analyzer.results['cancer_incidence_with_hiv'][year_key],
-                'cancer_incidence_no_hiv': analyzer.results['cancer_incidence_no_hiv'][year_key],
-                'cancer_rate_ratio': analyzer.results['cancer_hiv_rate_ratios'][year_key],
-                'simulation_id': i + 1,
-                'rank': rank if rank is not None else np.nan,
-                'mismatch': mismatch if mismatch is not None else np.nan
-            })
-            all_analyzer_dfs.append(df)
-    
-    if not all_analyzer_dfs:
-        raise ValueError("No analyzer results found in any simulations")
-    
-    combined_df = pd.concat(all_analyzer_dfs, ignore_index=True)
-    
-    # Calculate aggregate statistics with quartiles
-    aggregate_stats = combined_df.groupby('bins').agg({
-        'cancers': ['median', q25_func, q75_func, 'mean', 'min', 'max'],
-        'cancers_with_hiv': ['median', q25_func, q75_func, 'mean', 'min', 'max'],
-        'cancers_no_hiv': ['median', q25_func, q75_func, 'mean', 'min', 'max'],
-        'cancer_incidence': ['median', q25_func, q75_func, 'mean', 'min', 'max'],
-        'cancer_incidence_with_hiv': ['median', q25_func, q75_func, 'mean', 'min', 'max'],
-        'cancer_incidence_no_hiv': ['median', q25_func, q75_func, 'mean', 'min', 'max'],
-        'cancer_rate_ratio': ['median', q25_func, q75_func, 'mean', 'min', 'max']
-    }).round(2)
-    
+        df = analyzer.to_dataframe(year)
+        df['simulation_id'] = i + 1
+        df['rank'] = getattr(sim, 'rank', np.nan)
+        df['mismatch'] = getattr(sim, 'mismatch', np.nan)
+        frames.append(df)
+
+    if not frames:
+        raise ValueError('No analyzer results found in any simulations')
+
+    combined_df = pd.concat(frames, ignore_index=True)
+    aggregate_stats = combined_df.groupby('bins', sort=False).agg(
+        {m: ['median', q25_func, q75_func, 'mean', 'min', 'max'] for m in metrics}
+    ).round(2)
     aggregate_stats.columns = ['_'.join(col).strip() for col in aggregate_stats.columns]
     aggregate_stats = aggregate_stats.reset_index()
-    
+
     return combined_df, aggregate_stats
 
 
-""" 8. run_multi_sim_with_analyzers --> Function to run multiple simulations with analyzers """
-
-def run_multi_sim_with_analyzers(
-        analyzers=None, interventions=None, debug=0, seed=1, verbose=0.5,
-        do_save=False, end=2020, calib_pars=None, hiv_datafile=None, art_datafile=None,
-        n_runs=100, batch_size=None, top_pars=None, create_reduced=True, model_hiv=True):
-    """Run multiple simulations with analyzers using optimized batch processing.
-
-    Optimized for large numbers of parameter sets (e.g., 100 parameter sets with 10 runs each).
-    When top_pars is provided, automatically uses optimized batch processing.
-    """
-
-    # If top_pars is provided, use run_multi_sim which handles multiple parameter sets
-    if top_pars is not None:
-        return run_multi_sim(
-            analyzers=analyzers,
-            interventions=interventions,
-            debug=debug,
-            seed=seed,
-            verbose=verbose,
-            do_save=do_save,
-            end=end,
-            calib_pars=calib_pars,
-            hiv_datafile=hiv_datafile,
-            art_datafile=art_datafile,
-            n_runs=n_runs,
-            batch_size=batch_size,
-            top_pars=top_pars,
-            create_reduced=create_reduced,
-            model_hiv=model_hiv
-        )
-
-    # Otherwise, run with single parameter set (original behavior)
-    # Make arguments
-    default_hiv, default_art = _default_datafiles()
-    if hiv_datafile is None:
-        hiv_datafile = default_hiv
-    if art_datafile is None:
-        art_datafile = default_art
-
-    # Set default batch_size if not provided
-    if batch_size is None:
-        batch_size = min(25, n_runs)
-
-    print(f'Running {n_runs} simulations with analyzers in batches of {batch_size}...')
-    start_time = time.time()
-    
-    all_sims = []
-    batch_num = 0
-    
-    for batch_start in range(0, n_runs, batch_size):
-        batch_num += 1
-        batch_end = min(batch_start + batch_size, n_runs)
-        batch_runs = batch_end - batch_start
-        
-        print(f'Processing batch {batch_num}: runs {batch_start+1}-{batch_end} ({batch_runs} simulations)')
-        
-        # Create fresh base sim for each batch to avoid memory accumulation
-        base_sim = make_sim(
-            debug=debug,
-            seed=seed + batch_start,  # Use different seeds for each batch
-            end=end,
-            hiv_datafile=hiv_datafile,
-            art_datafile=art_datafile,
-            analyzers=analyzers,
-            interventions=interventions,
-            calib_pars=calib_pars,
-            model_hiv=model_hiv
-        )
-        base_sim['verbose'] = verbose
-
-        # Create and run MultiSim for this batch
-        msim = hpv.MultiSim(base_sim)
-        msim.run(n_runs=batch_runs)
-
-        # Store results from this batch
-        all_sims.extend(msim.sims)
-        
-        # Force garbage collection to free memory
-        del msim, base_sim
-        gc.collect()
-        
-        print(f'Completed batch {batch_num} ({batch_runs} simulations)')
-    
-    end_time = time.time()
-    print(f'Completed all {n_runs} simulations in {end_time - start_time:.2f} seconds')
-    
-    return all_sims
-
-""" 9. run_single_par_set --> Function to run simulations for a single parameter set (for SLURM job arrays) """
+""" 8. run_single_par_set --> Function to run simulations for a single parameter set (for SLURM job arrays) """
 
 def run_single_par_set(par_set, analyzers=None, interventions=None, debug=0, seed=1, verbose=0.5,
-                       do_save=False, end=2020, hiv_datafile=None, art_datafile=None,
+                       do_save=False, end=2020, hiv_data=None,
                        n_runs=100, batch_size=25, location='zambia', output_dir='results'):
     """Run simulations for a single parameter set. Used for SLURM job array parallelization."""
     rank = par_set.get('rank')
@@ -691,7 +671,7 @@ def run_single_par_set(par_set, analyzers=None, interventions=None, debug=0, see
     print(f"{'='*80}\n")
     
     # Run simulations with this parameter set
-    sims = run_multi_sim_with_analyzers(
+    sims, _ = run_multi_sim(
         analyzers=analyzers,
         interventions=interventions,
         debug=debug,
@@ -700,8 +680,7 @@ def run_single_par_set(par_set, analyzers=None, interventions=None, debug=0, see
         do_save=False,  # We'll save separately
         end=end,
         calib_pars=calib_pars,
-        hiv_datafile=hiv_datafile,
-        art_datafile=art_datafile,
+        hiv_data=hiv_data,
         n_runs=n_runs,
         batch_size=batch_size
     )
@@ -729,5 +708,57 @@ def run_single_par_set(par_set, analyzers=None, interventions=None, debug=0, see
             print(f'Saved analyzer results for rank {rank}')
         except Exception as e:
             print(f'Warning: Could not aggregate analyzer results for rank {rank}: {e}')
-    
+
     return sims
+
+
+""" 9. calib_eval_fn --> combined calibration objective (standard targets + IRR by age) """
+
+def calib_eval_fn(sim, data, irr_data=None, weights=None, gof_kwargs=None,
+                  irr_year=2021, irr_weight=1.0, irr_min_age=25,
+                  irr_max_age=75):
+    """Combined hpv.Calibration objective: the default data= term plus a
+    HIV-stratified rate-ratio-by-age term computed off the CancerByAgeHIV
+    analyzer.
+
+    Targets are read from a long-format CSV (columns: year, name, age, sex,
+    genotype, value) with name=cancer_hiv_rate_ratios. Placeholder rows with
+    value == 1 (age 0, 15 in Zambia's file) are dropped, and only ages in
+    [irr_min_age, irr_max_age] are fitted: below 25 the sim has near-zero
+    cancer in either HIV stratum so the ratio is noisy or degenerate (both
+    sides can be 0), and above 75 the surviving-WWH denominator is tiny.
+    This matches the manuscript's Figure 1(c), which restricts the same
+    axis to 25+.
+
+    hpv.Calibration's `data=` path can't express an HIV-stratified by-age
+    target -- its by_age analyzer has no HIV split -- so this eval_fn is
+    used with eval_fn=/eval_kw= instead of data=; _setup_analyzers must be
+    called manually first to install the standard by_age analyzer.
+    """
+    from hpvsim.calibration import default_eval_fn, compute_gof
+    standard = default_eval_fn(sim, data, weights=weights, gof_kwargs=gof_kwargs)
+    if irr_data is None:
+        return float(standard)
+
+    az = next((a for a in sim.analyzers.values()
+               if isinstance(a, CancerByAgeHIV)), None)
+    if az is None:
+        return float(standard)
+
+    modeled_df = az.to_dataframe(int(irr_year))
+    bin_lo = np.array([int(str(b).split('-')[0]) for b in modeled_df['bins']])
+    modeled_by_age = dict(zip(bin_lo, modeled_df['cancer_rate_ratio']))
+
+    fit = irr_data[(irr_data['value'] > 1.001)
+                   & (irr_data['age'] >= irr_min_age)
+                   & (irr_data['age'] <= irr_max_age)]
+    ages = fit['age'].astype(int).values
+    targets = fit['value'].astype(float).values
+    modeled = np.array([modeled_by_age.get(a, np.nan) for a in ages], dtype=float)
+    mask = np.isfinite(modeled) & (modeled > 0)
+    if not mask.any():
+        return float(standard)
+
+    irr_gof = compute_gof(targets[mask], modeled[mask],
+                          use_frac=True, as_scalar='sum')
+    return float(standard) + float(irr_weight) * float(irr_gof)
