@@ -1,4 +1,6 @@
-hpvsim[hiv]>=3.2
+# HPVsim 3.2 is not yet published on PyPI. Pin the official upstream commit
+# that introduced the scale-weighted HIV results used by this repository.
+hpvsim[hiv] @ git+https://github.com/starsimhub/hpvsim.git@58ea8c5121fc184ba88ff7925408246ef316399a
 sciris>=3.1
 numpy>=1.24
 pandas>=2.0

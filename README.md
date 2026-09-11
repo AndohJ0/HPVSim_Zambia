@@ -8,10 +8,15 @@ data. Built on **hpvsim v3.2** with **stisim v1.6** (HIV co-infection via
 ## Install
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+hpvsim-download-data
 ```
 
-Requires `hpvsim[hiv]>=3.2` and `stisim[hiv]>=1.6`.
+HPVsim 3.2 is not currently published on PyPI. `requirements.txt` therefore
+pins the official upstream HPVsim commit used by this project, including its
+HIV dependency. `hpvsim-download-data` installs HPVsim's separate demographic
+data bundle inside the active virtual environment. Neither the Python packages
+nor this data bundle is stored in this repository.
 
 ## What's here
 
@@ -52,7 +57,7 @@ VM, not locally.
 ## Testing
 
 ```bash
-pytest tests/
+python -m pytest tests/ -v
 ```
 
 ## Data provenance
